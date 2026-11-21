@@ -1,4 +1,4 @@
-# Rust Auto Clicker
+# Clicksmith
 
 A native desktop auto clicker written in Rust. It supports Windows, macOS, and Linux/X11, with a small `egui` interface and Rust based input handling.
 
@@ -12,6 +12,7 @@ A native desktop auto clicker written in Rust. It supports Windows, macOS, and L
 - Pick a target location with a click anywhere on screen.
 - Toggle clicking with a configurable global F6–F12 hotkey.
 - Record mouse click positions and timing, then play the sequence back.
+- Check for GitHub releases at startup, install a newer version automatically, then restart.
 
 ## Run
 
@@ -36,6 +37,10 @@ cargo build --release
 ```
 
 On Linux, the desktop and input crates may require your distribution's X11 development libraries. GitHub Actions checks builds on Windows, macOS, and Ubuntu.
+
+Push a `v*` tag to create a GitHub pre-release with platform builds attached. Each tagged release is marked as a pre-release.
+
+Release builds check the public GitHub release list when they start. If a newer version is available, Clicksmith downloads the matching platform archive, verifies its GitHub-published SHA-256 digest when provided, replaces its executable, and restarts. Debug builds skip update checks. The update check requires internet access and write access to the installed executable's folder; if an update cannot be applied, Clicksmith starts normally and shows the reason in its status line.
 
 ## License
 

@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::{
     sync::{
         Arc,
@@ -17,6 +19,7 @@ const UI_REFRESH: Duration = Duration::from_millis(16);
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(300);
 
 fn main() -> eframe::Result {
+    let startup_status = check_for_updates();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([500.0, 690.0])
@@ -25,10 +28,68 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "Rust Auto Clicker",
+        "Clicksmith",
         options,
-        Box::new(|_creation_context| Ok(Box::new(ClickerApp::new()))),
+        Box::new(move |_creation_context| Ok(Box::new(ClickerApp::new(startup_status)))),
     )
+}
+
+fn check_for_updates() -> Option<String> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+
+    let update_status = self_update::backends::github::Update::configure()
+        .repo_owner("scorpionlegend")
+        .repo_name("clicksmith")
+        .bin_name("clicksmith")
+        .asset_identifier(release_asset_identifier())
+        .current_version(self_update::cargo_crate_version!())
+        .update_strategy(self_update::UpdateStrategy::Latest)
+        .timeout(Duration::from_secs(30))
+        .check_install_path_writable(true)
+        .unattended()
+        .build()
+        .and_then(|updater| updater.update());
+
+    match update_status {
+        Ok(status) if status.is_updated() => match self_update::restart::restart() {
+            Ok(_) => std::process::exit(0),
+            Err(error) => Some(format!("Update installed, but restart failed: {error}")),
+        },
+        Ok(_) => None,
+        Err(error) => Some(format!("Auto-update skipped: {error}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn release_asset_identifier() -> &'static str {
+    "windows-x86_64"
+}
+
+#[cfg(target_os = "linux")]
+fn release_asset_identifier() -> &'static str {
+    "linux-x86_64"
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn release_asset_identifier() -> &'static str {
+    "macos-x86_64"
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn release_asset_identifier() -> &'static str {
+    "macos-aarch64"
+}
+
+#[cfg(all(target_os = "macos", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+fn release_asset_identifier() -> &'static str {
+    "macos"
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+fn release_asset_identifier() -> &'static str {
+    "clicksmith"
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,7 +241,7 @@ impl Worker {
         let thread_clicks = Arc::clone(&clicks);
 
         let worker_thread = thread::Builder::new()
-            .name("rust-autoclicker".to_owned())
+            .name("clicksmith".to_owned())
             .spawn(move || {
                 let result = run_plan(plan, &stop_rx, &thread_clicks);
                 let _ = result_tx.send(result.err());
@@ -357,10 +418,10 @@ struct ClickerApp {
 }
 
 impl ClickerApp {
-    fn new() -> Self {
+    fn new(startup_status: Option<String>) -> Self {
         let (listener_tx, listener_rx) = mpsc::channel();
         let listener_spawn = thread::Builder::new()
-            .name("rust-autoclicker-input-listener".to_owned())
+            .name("clicksmith-input-listener".to_owned())
             .spawn(move || {
                 let callback_tx = listener_tx.clone();
                 if let Err(error) = rdev::listen(move |event| {
@@ -373,8 +434,9 @@ impl ClickerApp {
             .err()
             .map(|error| format!("Could not start the global input listener: {error}"));
         let status = listener_error
-            .as_ref()
-            .map_or_else(|| "Ready".to_owned(), Clone::clone);
+            .clone()
+            .or(startup_status)
+            .unwrap_or_else(|| "Ready".to_owned());
 
         Self {
             hours: 0,
@@ -712,8 +774,9 @@ impl eframe::App for ClickerApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(6.0);
             ui.vertical_centered(|ui| {
-                ui.heading("Rust Auto Clicker");
+                ui.heading("Clicksmith");
                 ui.label("Cross-platform mouse automation");
+                ui.small(format!("Version {}", env!("CARGO_PKG_VERSION")));
             });
             ui.add_space(12.0);
 
