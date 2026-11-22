@@ -13,7 +13,9 @@ A native desktop auto clicker written in Rust. It supports Windows, macOS, and L
 - Pick a target location with a click anywhere on screen.
 - Toggle clicking with a configurable global F6–F12 hotkey.
 - Record mouse click positions and timing, then play the sequence back.
-- Check for GitHub releases at startup, install a newer version automatically, then restart.
+- Choose a color theme or customize background and accent colors; text contrast adjusts automatically and preferences persist.
+- Keep the main window on top of other windows.
+- Check for GitHub releases at startup or from Settings, install a newer version, then restart.
 
 The main window has a fixed size so its controls remain visible together.
 

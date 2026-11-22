@@ -19,7 +19,14 @@ const UI_REFRESH: Duration = Duration::from_millis(16);
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(300);
 
 fn main() -> eframe::Result {
-    let startup_status = check_for_updates();
+    let startup_status = match check_for_updates() {
+        Ok(UpdateCheckResult::Updated) => match self_update::restart::restart() {
+            Ok(_) => std::process::exit(0),
+            Err(error) => Some(format!("Update installed, but restart failed: {error}")),
+        },
+        Ok(UpdateCheckResult::UpToDate | UpdateCheckResult::DevelopmentBuild) => None,
+        Err(error) => Some(format!("Auto-update skipped: {error}")),
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([500.0, 690.0])
@@ -30,13 +37,25 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Clicksmith",
         options,
-        Box::new(move |_creation_context| Ok(Box::new(ClickerApp::new(startup_status)))),
+        Box::new(move |creation_context| {
+            Ok(Box::new(ClickerApp::new(
+                startup_status,
+                creation_context.storage,
+            )))
+        }),
     )
 }
 
-fn check_for_updates() -> Option<String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateCheckResult {
+    Updated,
+    UpToDate,
+    DevelopmentBuild,
+}
+
+fn check_for_updates() -> Result<UpdateCheckResult, String> {
     if cfg!(debug_assertions) {
-        return None;
+        return Ok(UpdateCheckResult::DevelopmentBuild);
     }
 
     let update_status = self_update::backends::github::Update::configure()
@@ -53,12 +72,9 @@ fn check_for_updates() -> Option<String> {
         .and_then(|updater| updater.update());
 
     match update_status {
-        Ok(status) if status.is_updated() => match self_update::restart::restart() {
-            Ok(_) => std::process::exit(0),
-            Err(error) => Some(format!("Update installed, but restart failed: {error}")),
-        },
-        Ok(_) => None,
-        Err(error) => Some(format!("Auto-update skipped: {error}")),
+        Ok(status) if status.is_updated() => Ok(UpdateCheckResult::Updated),
+        Ok(_) => Ok(UpdateCheckResult::UpToDate),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -391,6 +407,180 @@ enum ListenerMessage {
     Error(String),
 }
 
+const SETTINGS_STORAGE_KEY: &str = "clicksmith_settings";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ThemeChoice {
+    #[default]
+    ClassicGray,
+    BlackPink,
+    BabyBlue,
+    Lavender,
+    Mint,
+    WarmLight,
+    Custom,
+}
+
+impl ThemeChoice {
+    const ALL: [Self; 7] = [
+        Self::ClassicGray,
+        Self::BlackPink,
+        Self::BabyBlue,
+        Self::Lavender,
+        Self::Mint,
+        Self::WarmLight,
+        Self::Custom,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::ClassicGray => "Classic gray",
+            Self::BlackPink => "Black pink",
+            Self::BabyBlue => "Baby blue",
+            Self::Lavender => "Lavender",
+            Self::Mint => "Mint",
+            Self::WarmLight => "Warm light",
+            Self::Custom => "Custom colors",
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct AppSettings {
+    theme: ThemeChoice,
+    custom_background: [u8; 3],
+    custom_accent: [u8; 3],
+    always_on_top: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            theme: ThemeChoice::ClassicGray,
+            custom_background: [228, 231, 235],
+            custom_accent: [74, 134, 202],
+            always_on_top: false,
+        }
+    }
+}
+
+struct ThemePalette {
+    background: egui::Color32,
+    window: egui::Color32,
+    accent: egui::Color32,
+}
+
+impl AppSettings {
+    fn palette(&self) -> ThemePalette {
+        use egui::Color32;
+
+        let rgb = |red, green, blue| Color32::from_rgb(red, green, blue);
+        match self.theme {
+            ThemeChoice::ClassicGray => ThemePalette {
+                background: rgb(235, 237, 240),
+                window: rgb(247, 248, 250),
+                accent: rgb(47, 126, 199),
+            },
+            ThemeChoice::BlackPink => ThemePalette {
+                background: rgb(20, 18, 24),
+                window: rgb(34, 29, 39),
+                accent: rgb(244, 91, 171),
+            },
+            ThemeChoice::BabyBlue => ThemePalette {
+                background: rgb(211, 234, 248),
+                window: rgb(231, 245, 253),
+                accent: rgb(55, 139, 194),
+            },
+            ThemeChoice::Lavender => ThemePalette {
+                background: rgb(37, 32, 49),
+                window: rgb(52, 44, 68),
+                accent: rgb(174, 142, 255),
+            },
+            ThemeChoice::Mint => ThemePalette {
+                background: rgb(27, 42, 36),
+                window: rgb(40, 60, 51),
+                accent: rgb(104, 219, 166),
+            },
+            ThemeChoice::WarmLight => ThemePalette {
+                background: rgb(244, 237, 225),
+                window: rgb(252, 248, 241),
+                accent: rgb(190, 112, 67),
+            },
+            ThemeChoice::Custom => {
+                let background = Color32::from_rgb(
+                    self.custom_background[0],
+                    self.custom_background[1],
+                    self.custom_background[2],
+                );
+                let window_tint = if uses_light_text(background) {
+                    Color32::BLACK
+                } else {
+                    Color32::WHITE
+                };
+                ThemePalette {
+                    background,
+                    window: blend(background, window_tint, 0.08),
+                    accent: Color32::from_rgb(
+                        self.custom_accent[0],
+                        self.custom_accent[1],
+                        self.custom_accent[2],
+                    ),
+                }
+            }
+        }
+    }
+}
+
+fn color_luminance(color: egui::Color32) -> f32 {
+    fn linear_channel(channel: u8) -> f32 {
+        let value = f32::from(channel) / 255.0;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    0.2126 * linear_channel(color.r())
+        + 0.7152 * linear_channel(color.g())
+        + 0.0722 * linear_channel(color.b())
+}
+
+fn readable_text_color(background: egui::Color32) -> egui::Color32 {
+    if uses_light_text(background) {
+        egui::Color32::from_rgb(248, 249, 252)
+    } else {
+        egui::Color32::from_rgb(25, 28, 33)
+    }
+}
+
+fn uses_light_text(background: egui::Color32) -> bool {
+    let background_luminance = color_luminance(background);
+    let dark_text_luminance = color_luminance(egui::Color32::from_rgb(25, 28, 33));
+    let light_text_luminance = color_luminance(egui::Color32::from_rgb(248, 249, 252));
+    let contrast_ratio = |text_luminance: f32| {
+        let lighter = background_luminance.max(text_luminance);
+        let darker = background_luminance.min(text_luminance);
+        (lighter + 0.05) / (darker + 0.05)
+    };
+
+    contrast_ratio(light_text_luminance) > contrast_ratio(dark_text_luminance)
+}
+
+fn blend(from: egui::Color32, to: egui::Color32, amount: f32) -> egui::Color32 {
+    let mix = |left: u8, right: u8| {
+        (f32::from(left) + (f32::from(right) - f32::from(left)) * amount)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    egui::Color32::from_rgb(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+    )
+}
+
 struct ClickerApp {
     hours: u32,
     minutes: u32,
@@ -411,6 +601,11 @@ struct ClickerApp {
     hotkey_last_toggled: Option<Instant>,
     show_hotkey_settings: bool,
     show_recorder: bool,
+    show_settings: bool,
+    settings: AppSettings,
+    applied_always_on_top: Option<bool>,
+    update_status: String,
+    update_check_rx: Option<Receiver<Result<UpdateCheckResult, String>>>,
     recording_since: Option<SystemTime>,
     recording_armed_at: Option<SystemTime>,
     recording_wait_release: bool,
@@ -426,7 +621,10 @@ struct ClickerApp {
 }
 
 impl ClickerApp {
-    fn new(startup_status: Option<String>) -> Self {
+    fn new(startup_status: Option<String>, storage: Option<&dyn eframe::Storage>) -> Self {
+        let settings = storage
+            .and_then(|storage| eframe::get_value(storage, SETTINGS_STORAGE_KEY))
+            .unwrap_or_default();
         let (listener_tx, listener_rx) = mpsc::channel();
         let listener_spawn = thread::Builder::new()
             .name("clicksmith-input-listener".to_owned())
@@ -441,6 +639,13 @@ impl ClickerApp {
         let listener_error = listener_spawn
             .err()
             .map(|error| format!("Could not start the global input listener: {error}"));
+        let update_status = if cfg!(debug_assertions) {
+            "Update checks are disabled in debug builds.".to_owned()
+        } else if let Some(status) = startup_status.as_ref() {
+            status.clone()
+        } else {
+            "Release update check runs when Clicksmith starts.".to_owned()
+        };
         let status = listener_error
             .clone()
             .or(startup_status)
@@ -466,6 +671,11 @@ impl ClickerApp {
             hotkey_last_toggled: None,
             show_hotkey_settings: false,
             show_recorder: false,
+            show_settings: false,
+            settings,
+            applied_always_on_top: None,
+            update_status,
+            update_check_rx: None,
             recording_since: None,
             recording_armed_at: None,
             recording_wait_release: false,
@@ -675,6 +885,212 @@ impl ClickerApp {
             .map_or(self.last_run_clicks, Worker::click_count)
     }
 
+    fn start_update_check(&mut self) {
+        if self.update_check_rx.is_some() {
+            return;
+        }
+
+        let (result_tx, result_rx) = mpsc::channel();
+        let spawn_result = thread::Builder::new()
+            .name("clicksmith-update-check".to_owned())
+            .spawn(move || {
+                let _ = result_tx.send(check_for_updates());
+            });
+
+        match spawn_result {
+            Ok(_) => {
+                self.update_check_rx = Some(result_rx);
+                self.update_status = "Checking GitHub for updates…".to_owned();
+            }
+            Err(error) => {
+                self.update_status = format!("Could not start update check: {error}");
+            }
+        }
+    }
+
+    fn poll_update_check(&mut self) {
+        let result = match self.update_check_rx.as_ref() {
+            Some(receiver) => match receiver.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Err("Update check stopped unexpectedly".to_owned())
+                }
+            },
+            None => return,
+        };
+        self.update_check_rx = None;
+
+        match result {
+            Ok(UpdateCheckResult::UpToDate) => {
+                self.update_status = "Clicksmith is up to date.".to_owned();
+            }
+            Ok(UpdateCheckResult::DevelopmentBuild) => {
+                self.update_status =
+                    "Update checks are disabled in debug builds; use a release build.".to_owned();
+            }
+            Ok(UpdateCheckResult::Updated) => {
+                self.update_status = "Update installed. Restarting Clicksmith…".to_owned();
+                self.status = "Stopping for update…".to_owned();
+                if let Some(worker) = self.worker.take() {
+                    worker.request_stop();
+                    let _ = worker.thread.join();
+                }
+                self.recording_since = None;
+                self.recording_armed_at = None;
+                self.recording_wait_release = false;
+
+                match self_update::restart::restart() {
+                    Ok(_) => std::process::exit(0),
+                    Err(error) => {
+                        self.update_status =
+                            format!("Update installed, but restart failed: {error}");
+                    }
+                }
+            }
+            Err(error) => {
+                self.update_status = format!("Update check failed: {error}");
+            }
+        }
+    }
+
+    fn apply_theme(&self, ctx: &egui::Context) {
+        let palette = self.settings.palette();
+        let text = readable_text_color(palette.background);
+        let dark = uses_light_text(palette.background);
+        let mut visuals = if dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+
+        visuals.panel_fill = palette.background;
+        visuals.window_fill = palette.window;
+        visuals.extreme_bg_color = blend(palette.background, palette.window, 0.5);
+        visuals.faint_bg_color = blend(palette.background, palette.window, 0.3);
+        visuals.code_bg_color = blend(palette.background, palette.window, 0.6);
+        visuals.override_text_color = Some(text);
+        visuals.hyperlink_color = text;
+        visuals.selection.bg_fill = blend(palette.background, palette.window, 0.5);
+        visuals.selection.stroke = egui::Stroke::new(1.0_f32, palette.accent);
+        visuals.window_stroke.color = blend(palette.background, palette.accent, 0.35);
+
+        let quiet_fill = blend(palette.background, palette.window, 0.55);
+        let idle_fill = blend(palette.background, palette.window, 0.75);
+        let hover_fill = blend(palette.background, palette.window, 0.65);
+        let active_fill = blend(palette.background, palette.window, 0.85);
+        for widget in [
+            &mut visuals.widgets.noninteractive,
+            &mut visuals.widgets.inactive,
+            &mut visuals.widgets.hovered,
+            &mut visuals.widgets.active,
+            &mut visuals.widgets.open,
+        ] {
+            widget.fg_stroke.color = text;
+            widget.bg_stroke.color = blend(palette.background, palette.accent, 0.2);
+        }
+        visuals.widgets.noninteractive.bg_fill = quiet_fill;
+        visuals.widgets.noninteractive.weak_bg_fill = palette.background;
+        visuals.widgets.inactive.bg_fill = idle_fill;
+        visuals.widgets.inactive.weak_bg_fill = palette.background;
+        visuals.widgets.hovered.bg_fill = hover_fill;
+        visuals.widgets.hovered.weak_bg_fill = blend(palette.background, palette.window, 0.4);
+        visuals.widgets.active.bg_fill = active_fill;
+        visuals.widgets.active.weak_bg_fill = blend(palette.background, palette.window, 0.6);
+        visuals.widgets.open.bg_fill = hover_fill;
+        visuals.widgets.open.weak_bg_fill = blend(palette.background, palette.window, 0.4);
+
+        ctx.set_visuals(visuals);
+    }
+
+    fn apply_window_level(&mut self, ctx: &egui::Context) {
+        if self.applied_always_on_top == Some(self.settings.always_on_top) {
+            return;
+        }
+
+        let level = if self.settings.always_on_top {
+            egui::WindowLevel::AlwaysOnTop
+        } else {
+            egui::WindowLevel::Normal
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+        self.applied_always_on_top = Some(self.settings.always_on_top);
+    }
+
+    fn show_settings_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_settings;
+        let mut request_update_check = false;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(390.0)
+            .show(ctx, |ui| {
+                ui.heading("Appearance");
+                ui.horizontal(|ui| {
+                    ui.label("Theme");
+                    egui::ComboBox::from_id_salt("theme-choice")
+                        .selected_text(self.settings.theme.label())
+                        .show_ui(ui, |ui| {
+                            for theme in ThemeChoice::ALL {
+                                ui.selectable_value(&mut self.settings.theme, theme, theme.label());
+                            }
+                        });
+                });
+
+                if self.settings.theme == ThemeChoice::Custom {
+                    let mut background = egui::Color32::from_rgb(
+                        self.settings.custom_background[0],
+                        self.settings.custom_background[1],
+                        self.settings.custom_background[2],
+                    );
+                    let mut accent = egui::Color32::from_rgb(
+                        self.settings.custom_accent[0],
+                        self.settings.custom_accent[1],
+                        self.settings.custom_accent[2],
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Background");
+                        ui.color_edit_button_srgba(&mut background);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Accent");
+                        ui.color_edit_button_srgba(&mut accent);
+                    });
+                    self.settings.custom_background =
+                        [background.r(), background.g(), background.b()];
+                    self.settings.custom_accent = [accent.r(), accent.g(), accent.b()];
+                }
+
+                ui.label("Text color adjusts automatically for contrast.");
+                ui.checkbox(
+                    &mut self.settings.always_on_top,
+                    "Keep main window always on top",
+                );
+                ui.separator();
+                ui.heading("Updates");
+                ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
+                if ui
+                    .add_enabled(
+                        self.update_check_rx.is_none(),
+                        egui::Button::new(if self.update_check_rx.is_some() {
+                            "Checking for updates…"
+                        } else {
+                            "Check for updates"
+                        }),
+                    )
+                    .clicked()
+                {
+                    request_update_check = true;
+                }
+                ui.label(&self.update_status);
+            });
+        self.show_settings = open;
+
+        if request_update_check {
+            self.start_update_check();
+        }
+    }
+
     fn show_hotkey_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("Hotkey settings")
             .open(&mut self.show_hotkey_settings)
@@ -773,11 +1189,9 @@ impl ClickerApp {
 impl eframe::App for ClickerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_worker();
-
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = egui::Color32::from_rgb(20, 23, 29);
-        visuals.window_fill = egui::Color32::from_rgb(27, 31, 38);
-        ctx.set_visuals(visuals);
+        self.poll_update_check();
+        self.apply_theme(ctx);
+        self.apply_window_level(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(6.0);
@@ -914,6 +1328,9 @@ impl eframe::App for ClickerApp {
                 if ui.button("Record & Playback").clicked() {
                     self.show_recorder = true;
                 }
+                if ui.button("Settings").clicked() {
+                    self.show_settings = true;
+                }
             });
 
             ui.add_space(4.0);
@@ -934,9 +1351,14 @@ impl eframe::App for ClickerApp {
 
         self.show_hotkey_window(ctx);
         self.show_recorder_window(ctx);
+        self.show_settings_window(ctx);
         self.handle_listener_events();
 
         ctx.request_repaint_after(UI_REFRESH);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, SETTINGS_STORAGE_KEY, &self.settings);
     }
 }
 
