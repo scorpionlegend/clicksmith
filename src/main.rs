@@ -29,8 +29,17 @@ fn main() -> eframe::Result {
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([500.0, 690.0])
-            .with_resizable(false),
+            .with_inner_size([720.0, 760.0])
+            .with_min_inner_size([720.0, 760.0])
+            .with_resizable(true)
+            .with_maximize_button(true),
+        window_builder: Some(Box::new(|viewport| {
+            let min_size = egui::vec2(720.0, 760.0);
+            match viewport.inner_size {
+                Some(size) if size.x >= min_size.x && size.y >= min_size.y => viewport,
+                _ => viewport.with_inner_size(min_size),
+            }
+        })),
         ..Default::default()
     };
 
@@ -413,7 +422,8 @@ const SETTINGS_STORAGE_KEY: &str = "clicksmith_settings";
 enum ThemeChoice {
     #[default]
     ClassicGray,
-    BlackPink,
+    Black,
+    Pink,
     BabyBlue,
     Lavender,
     Mint,
@@ -422,9 +432,10 @@ enum ThemeChoice {
 }
 
 impl ThemeChoice {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::ClassicGray,
-        Self::BlackPink,
+        Self::Black,
+        Self::Pink,
         Self::BabyBlue,
         Self::Lavender,
         Self::Mint,
@@ -435,7 +446,8 @@ impl ThemeChoice {
     fn label(self) -> &'static str {
         match self {
             Self::ClassicGray => "Classic gray",
-            Self::BlackPink => "Black pink",
+            Self::Black => "Black",
+            Self::Pink => "Pink",
             Self::BabyBlue => "Baby blue",
             Self::Lavender => "Lavender",
             Self::Mint => "Mint",
@@ -482,10 +494,15 @@ impl AppSettings {
                 window: rgb(247, 248, 250),
                 accent: rgb(47, 126, 199),
             },
-            ThemeChoice::BlackPink => ThemePalette {
+            ThemeChoice::Black => ThemePalette {
                 background: rgb(20, 18, 24),
                 window: rgb(34, 29, 39),
-                accent: rgb(244, 91, 171),
+                accent: rgb(72, 130, 206),
+            },
+            ThemeChoice::Pink => ThemePalette {
+                background: rgb(247, 214, 230),
+                window: rgb(255, 237, 246),
+                accent: rgb(218, 55, 133),
             },
             ThemeChoice::BabyBlue => ThemePalette {
                 background: rgb(211, 234, 248),
@@ -966,7 +983,7 @@ impl ClickerApp {
 
         visuals.panel_fill = palette.background;
         visuals.window_fill = palette.window;
-        visuals.extreme_bg_color = blend(palette.background, palette.window, 0.5);
+        visuals.extreme_bg_color = egui::Color32::WHITE;
         visuals.faint_bg_color = blend(palette.background, palette.window, 0.3);
         visuals.code_bg_color = blend(palette.background, palette.window, 0.6);
         visuals.override_text_color = Some(text);
@@ -976,9 +993,9 @@ impl ClickerApp {
         visuals.window_stroke.color = blend(palette.background, palette.accent, 0.35);
 
         let quiet_fill = blend(palette.background, palette.window, 0.55);
-        let idle_fill = blend(palette.background, palette.window, 0.75);
-        let hover_fill = blend(palette.background, palette.window, 0.65);
-        let active_fill = blend(palette.background, palette.window, 0.85);
+        let accent_text = readable_text_color(palette.accent);
+        let hover_fill = blend(palette.accent, egui::Color32::WHITE, 0.12);
+        let active_fill = blend(palette.accent, egui::Color32::BLACK, 0.12);
         for widget in [
             &mut visuals.widgets.noninteractive,
             &mut visuals.widgets.inactive,
@@ -986,18 +1003,21 @@ impl ClickerApp {
             &mut visuals.widgets.active,
             &mut visuals.widgets.open,
         ] {
-            widget.fg_stroke.color = text;
+            widget.fg_stroke.color = accent_text;
             widget.bg_stroke.color = blend(palette.background, palette.accent, 0.2);
         }
         visuals.widgets.noninteractive.bg_fill = quiet_fill;
         visuals.widgets.noninteractive.weak_bg_fill = palette.background;
-        visuals.widgets.inactive.bg_fill = idle_fill;
+        visuals.widgets.inactive.bg_fill = palette.accent;
         visuals.widgets.inactive.weak_bg_fill = palette.background;
         visuals.widgets.hovered.bg_fill = hover_fill;
+        visuals.widgets.hovered.fg_stroke.color = readable_text_color(hover_fill);
         visuals.widgets.hovered.weak_bg_fill = blend(palette.background, palette.window, 0.4);
         visuals.widgets.active.bg_fill = active_fill;
+        visuals.widgets.active.fg_stroke.color = readable_text_color(active_fill);
         visuals.widgets.active.weak_bg_fill = blend(palette.background, palette.window, 0.6);
         visuals.widgets.open.bg_fill = hover_fill;
+        visuals.widgets.open.fg_stroke.color = readable_text_color(hover_fill);
         visuals.widgets.open.weak_bg_fill = blend(palette.background, palette.window, 0.4);
 
         ctx.set_visuals(visuals);
@@ -1017,77 +1037,118 @@ impl ClickerApp {
         self.applied_always_on_top = Some(self.settings.always_on_top);
     }
 
-    fn show_settings_window(&mut self, ctx: &egui::Context) {
-        let mut open = self.show_settings;
+    fn show_settings_page(&mut self, ui: &mut egui::Ui) -> bool {
         let mut request_update_check = false;
-        egui::Window::new("Settings")
-            .open(&mut open)
-            .resizable(false)
-            .default_width(390.0)
-            .show(ctx, |ui| {
-                ui.heading("Appearance");
-                ui.horizontal(|ui| {
-                    ui.label("Theme");
-                    egui::ComboBox::from_id_salt("theme-choice")
-                        .selected_text(self.settings.theme.label())
-                        .show_ui(ui, |ui| {
-                            for theme in ThemeChoice::ALL {
-                                ui.selectable_value(&mut self.settings.theme, theme, theme.label());
-                            }
-                        });
+        let mut close_requested = false;
+        ui.add_space(6.0);
+        ui.heading("Settings");
+        ui.add_space(8.0);
+        ui.label("Appearance");
+        ui.horizontal(|ui| {
+            ui.label("Theme");
+            egui::ComboBox::from_id_salt("theme-choice")
+                .selected_text(self.settings.theme.label())
+                .show_ui(ui, |ui| {
+                    for theme in ThemeChoice::ALL {
+                        ui.selectable_value(&mut self.settings.theme, theme, theme.label());
+                    }
                 });
+        });
 
-                if self.settings.theme == ThemeChoice::Custom {
-                    let mut background = egui::Color32::from_rgb(
-                        self.settings.custom_background[0],
-                        self.settings.custom_background[1],
-                        self.settings.custom_background[2],
-                    );
-                    let mut accent = egui::Color32::from_rgb(
-                        self.settings.custom_accent[0],
-                        self.settings.custom_accent[1],
-                        self.settings.custom_accent[2],
-                    );
-                    ui.horizontal(|ui| {
-                        ui.label("Background");
-                        ui.color_edit_button_srgba(&mut background);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Accent");
-                        ui.color_edit_button_srgba(&mut accent);
-                    });
-                    self.settings.custom_background =
-                        [background.r(), background.g(), background.b()];
-                    self.settings.custom_accent = [accent.r(), accent.g(), accent.b()];
-                }
-
-                ui.label("Text color adjusts automatically for contrast.");
-                ui.checkbox(
-                    &mut self.settings.always_on_top,
-                    "Keep main window always on top",
-                );
-                ui.separator();
-                ui.heading("Updates");
-                ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
-                if ui
-                    .add_enabled(
-                        self.update_check_rx.is_none(),
-                        egui::Button::new(if self.update_check_rx.is_some() {
-                            "Checking for updates…"
-                        } else {
-                            "Check for updates"
-                        }),
-                    )
-                    .clicked()
-                {
-                    request_update_check = true;
-                }
-                ui.label(&self.update_status);
+        if self.settings.theme == ThemeChoice::Custom {
+            let mut background = egui::Color32::from_rgb(
+                self.settings.custom_background[0],
+                self.settings.custom_background[1],
+                self.settings.custom_background[2],
+            );
+            let mut accent = egui::Color32::from_rgb(
+                self.settings.custom_accent[0],
+                self.settings.custom_accent[1],
+                self.settings.custom_accent[2],
+            );
+            ui.horizontal(|ui| {
+                ui.label("Background");
+                ui.color_edit_button_srgba(&mut background);
             });
-        self.show_settings = open;
+            ui.horizontal(|ui| {
+                ui.label("Accent");
+                ui.color_edit_button_srgba(&mut accent);
+            });
+            self.settings.custom_background = [background.r(), background.g(), background.b()];
+            self.settings.custom_accent = [accent.r(), accent.g(), accent.b()];
+        }
+
+        ui.label("Text color adjusts automatically for contrast.");
+        ui.checkbox(
+            &mut self.settings.always_on_top,
+            "Keep main window always on top",
+        );
+        ui.separator();
+        ui.label("Updates");
+        ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
+        if ui
+            .add_enabled(
+                self.update_check_rx.is_none(),
+                egui::Button::new(if self.update_check_rx.is_some() {
+                    "Checking for updates…"
+                } else {
+                    "Check for updates"
+                }),
+            )
+            .clicked()
+        {
+            request_update_check = true;
+        }
+        ui.label(&self.update_status);
+        ui.add_space(8.0);
+        if ui.button("Close Settings").clicked() {
+            close_requested = true;
+        }
 
         if request_update_check {
             self.start_update_check();
+        }
+        close_requested
+    }
+
+    fn show_settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+
+        let viewport_id = egui::ViewportId::from_hash_of("settings");
+        let viewport_builder = egui::ViewportBuilder::default()
+            .with_title("Clicksmith — Settings")
+            .with_inner_size([480.0, 520.0])
+            .with_min_inner_size([400.0, 360.0]);
+        let close_requested = ctx.show_viewport_immediate(
+            viewport_id,
+            viewport_builder,
+            |settings_ctx, viewport_class| {
+                let close_clicked = if viewport_class == egui::ViewportClass::Embedded {
+                    let mut open = true;
+                    let mut close_clicked = false;
+                    egui::Window::new("Clicksmith — Settings")
+                        .open(&mut open)
+                        .show(settings_ctx, |ui| {
+                            close_clicked = self.show_settings_page(ui);
+                        });
+                    close_clicked || !open
+                } else {
+                    let mut close_clicked = false;
+                    egui::CentralPanel::default().show(settings_ctx, |ui| {
+                        close_clicked = self.show_settings_page(ui);
+                    });
+                    close_clicked
+                };
+                if close_clicked {
+                    settings_ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                close_clicked || settings_ctx.input(|input| input.viewport().close_requested())
+            },
+        );
+        if close_requested {
+            self.show_settings = false;
         }
     }
 
@@ -1222,8 +1283,8 @@ impl eframe::App for ClickerApp {
             });
 
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.columns(2, |columns| {
+                egui::Frame::group(columns[0].style()).show(&mut columns[0], |ui| {
                     ui.label("Click options");
                     egui::ComboBox::from_id_salt("mouse-button")
                         .selected_text(self.button.label())
@@ -1241,7 +1302,7 @@ impl eframe::App for ClickerApp {
                         });
                 });
 
-                egui::Frame::group(ui.style()).show(ui, |ui| {
+                egui::Frame::group(columns[1].style()).show(&mut columns[1], |ui| {
                     ui.label("Click repeat");
                     ui.radio_value(&mut self.repeat_mode, RepeatMode::Count, "Repeat");
                     ui.add_enabled_ui(self.repeat_mode == RepeatMode::Count, |ui| {
@@ -1349,9 +1410,9 @@ impl eframe::App for ClickerApp {
             ui.small("The first click happens immediately. Current location follows your pointer.");
         });
 
+        self.show_settings_window(ctx);
         self.show_hotkey_window(ctx);
         self.show_recorder_window(ctx);
-        self.show_settings_window(ctx);
         self.handle_listener_events();
 
         ctx.request_repaint_after(UI_REFRESH);
