@@ -23,7 +23,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([500.0, 690.0])
-            .with_min_inner_size([460.0, 620.0]),
+            .with_resizable(false),
         ..Default::default()
     };
 
@@ -82,7 +82,10 @@ fn release_asset_identifier() -> &'static str {
     "macos-aarch64"
 }
 
-#[cfg(all(target_os = "macos", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(all(
+    target_os = "macos",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
 fn release_asset_identifier() -> &'static str {
     "macos"
 }
@@ -291,15 +294,20 @@ fn run_clicker(
         RepeatMode::Count => Some(settings.repeat_count.max(1)),
     };
     let mut completed = 0_u64;
+    let mut first_iteration = true;
 
     loop {
-        let delay = randomized_interval(
-            settings.interval,
-            settings.random_offset_ms,
-            &mut random_state,
-        );
-        if wait_for_stop(stop, delay) {
-            return Ok(());
+        if first_iteration {
+            first_iteration = false;
+        } else {
+            let delay = randomized_interval(
+                settings.interval,
+                settings.random_offset_ms,
+                &mut random_state,
+            );
+            if wait_for_stop(stop, delay) {
+                return Ok(());
+            }
         }
 
         if let CursorMode::Fixed = settings.cursor_mode {
@@ -909,7 +917,7 @@ impl eframe::App for ClickerApp {
             });
 
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(format!("Clicks: {}", self.run_click_count()));
                 ui.separator();
                 ui.label(&self.status);
@@ -921,9 +929,7 @@ impl eframe::App for ClickerApp {
                 );
             }
             ui.add_space(4.0);
-            ui.small(
-                "The first click occurs after one interval. Current location follows your pointer.",
-            );
+            ui.small("The first click happens immediately. Current location follows your pointer.");
         });
 
         self.show_hotkey_window(ctx);

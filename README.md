@@ -5,6 +5,7 @@ A native desktop auto clicker written in Rust. It supports Windows, macOS, and L
 ## Features
 
 - Set the interval in hours, minutes, seconds, and milliseconds.
+- Start clicking immediately, then repeat at the chosen interval.
 - Add a random positive or negative interval offset.
 - Choose left, right, or middle mouse button and single, double, or triple clicks.
 - Repeat a fixed number of times or keep clicking until stopped.
@@ -13,6 +14,8 @@ A native desktop auto clicker written in Rust. It supports Windows, macOS, and L
 - Toggle clicking with a configurable global F6–F12 hotkey.
 - Record mouse click positions and timing, then play the sequence back.
 - Check for GitHub releases at startup, install a newer version automatically, then restart.
+
+The main window has a fixed size so its controls remain visible together.
 
 ## Run
 
