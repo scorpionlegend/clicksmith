@@ -1,6 +1,6 @@
 [package]
 name = "clicksmith"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2024"
 rust-version = "1.88"
 description = "A cross-platform mouse auto clicker written in Rust"
@@ -28,6 +28,7 @@ category = "Utility"
 binaries = [{ path = "clicksmith", main = true }]
 binaries-dir = "target/release"
 out-dir = "target/packages"
+icons = ["packaging/linux/clicksmith.png"]
 resources = ["LICENSE"]
 
 [package.metadata.generate-rpm]
