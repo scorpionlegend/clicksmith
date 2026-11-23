@@ -17,20 +17,9 @@ use rdev::{Button as GlobalButton, Event, EventType, Key};
 const CLICK_GAP: Duration = Duration::from_millis(55);
 const UI_REFRESH: Duration = Duration::from_millis(16);
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(300);
+const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 fn main() -> eframe::Result {
-    let startup_status = match check_for_updates() {
-        Ok(UpdateCheckResult::Updated) => match self_update::restart::restart() {
-            Ok(_) => std::process::exit(0),
-            Err(error) => Some(format!("Update installed, but restart failed: {error}")),
-        },
-        Ok(
-            UpdateCheckResult::UpToDate
-            | UpdateCheckResult::DevelopmentBuild
-            | UpdateCheckResult::UpdatesManagedExternally,
-        ) => None,
-        Err(error) => Some(format!("Auto-update skipped: {error}")),
-    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([420.0, 500.0])
@@ -46,32 +35,26 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Clicksmith",
         options,
-        Box::new(move |creation_context| {
-            Ok(Box::new(ClickerApp::new(
-                startup_status,
-                creation_context.storage,
-            )))
-        }),
+        Box::new(move |creation_context| Ok(Box::new(ClickerApp::new(creation_context.storage)))),
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum UpdateCheckResult {
-    Updated,
+    UpdateAvailable(String),
     UpToDate,
     DevelopmentBuild,
     UpdatesManagedExternally,
 }
 
-fn check_for_updates() -> Result<UpdateCheckResult, String> {
-    if cfg!(feature = "package-managed") {
-        return Ok(UpdateCheckResult::UpdatesManagedExternally);
-    }
-    if cfg!(debug_assertions) {
-        return Ok(UpdateCheckResult::DevelopmentBuild);
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateInstallResult {
+    Updated,
+    UpToDate,
+}
 
-    let update_status = self_update::backends::github::Update::configure()
+fn configured_updater() -> Result<self_update::backends::github::Update, String> {
+    self_update::backends::github::Update::configure()
         .repo_owner("scorpionlegend")
         .repo_name("clicksmith")
         .bin_name("clicksmith")
@@ -82,13 +65,56 @@ fn check_for_updates() -> Result<UpdateCheckResult, String> {
         .check_install_path_writable(true)
         .unattended()
         .build()
-        .and_then(|updater| updater.update());
+        .map_err(|error| error.to_string())
+}
 
-    match update_status {
-        Ok(status) if status.is_updated() => Ok(UpdateCheckResult::Updated),
-        Ok(_) => Ok(UpdateCheckResult::UpToDate),
-        Err(error) => Err(error.to_string()),
+fn check_for_updates() -> Result<UpdateCheckResult, String> {
+    if cfg!(feature = "package-managed") {
+        return Ok(UpdateCheckResult::UpdatesManagedExternally);
     }
+    if cfg!(debug_assertions) {
+        return Ok(UpdateCheckResult::DevelopmentBuild);
+    }
+
+    let releases = configured_updater()?
+        .get_newer_releases()
+        .map_err(|error| error.to_string())?;
+    if releases
+        .is_update_available()
+        .map_err(|error| error.to_string())?
+    {
+        let version = releases
+            .latest()
+            .ok_or_else(|| "GitHub returned no release details".to_owned())?
+            .version()
+            .to_owned();
+        Ok(UpdateCheckResult::UpdateAvailable(version))
+    } else {
+        Ok(UpdateCheckResult::UpToDate)
+    }
+}
+
+fn update_checks_supported() -> bool {
+    !cfg!(feature = "package-managed") && !cfg!(debug_assertions)
+}
+
+fn install_update() -> Result<UpdateInstallResult, String> {
+    if cfg!(feature = "package-managed") {
+        return Err("Updates for this installation are managed externally".to_owned());
+    }
+    if cfg!(debug_assertions) {
+        return Err("Update installation is disabled in debug builds".to_owned());
+    }
+
+    configured_updater()
+        .and_then(|updater| updater.update().map_err(|error| error.to_string()))
+        .map(|status| {
+            if status.is_updated() {
+                UpdateInstallResult::Updated
+            } else {
+                UpdateInstallResult::UpToDate
+            }
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -468,6 +494,7 @@ struct AppSettings {
     custom_background: [u8; 3],
     custom_accent: [u8; 3],
     always_on_top: bool,
+    auto_update_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -477,6 +504,7 @@ impl Default for AppSettings {
             custom_background: [228, 231, 235],
             custom_accent: [74, 134, 202],
             always_on_top: false,
+            auto_update_enabled: false,
         }
     }
 }
@@ -627,6 +655,10 @@ struct ClickerApp {
     applied_always_on_top: Option<bool>,
     update_status: String,
     update_check_rx: Option<Receiver<Result<UpdateCheckResult, String>>>,
+    update_install_rx: Option<Receiver<Result<UpdateInstallResult, String>>>,
+    available_update: Option<String>,
+    update_prompt_open: bool,
+    next_auto_update_check: Option<Instant>,
     recording_since: Option<SystemTime>,
     recording_armed_at: Option<SystemTime>,
     recording_wait_release: bool,
@@ -642,10 +674,15 @@ struct ClickerApp {
 }
 
 impl ClickerApp {
-    fn new(startup_status: Option<String>, storage: Option<&dyn eframe::Storage>) -> Self {
-        let settings = storage
+    fn new(storage: Option<&dyn eframe::Storage>) -> Self {
+        let settings: AppSettings = storage
             .and_then(|storage| eframe::get_value(storage, SETTINGS_STORAGE_KEY))
             .unwrap_or_default();
+        let next_auto_update_check = if settings.auto_update_enabled && update_checks_supported() {
+            Some(Instant::now())
+        } else {
+            None
+        };
         let (listener_tx, listener_rx) = mpsc::channel();
         let listener_spawn = thread::Builder::new()
             .name("clicksmith-input-listener".to_owned())
@@ -665,15 +702,12 @@ impl ClickerApp {
                 .to_owned()
         } else if cfg!(debug_assertions) {
             "Update checks are disabled in debug builds.".to_owned()
-        } else if let Some(status) = startup_status.as_ref() {
-            status.clone()
+        } else if settings.auto_update_enabled {
+            "Automatic update checks are enabled; Clicksmith checks hourly.".to_owned()
         } else {
-            "Release update check runs when Clicksmith starts.".to_owned()
+            "Select Check for updates to look for a release.".to_owned()
         };
-        let status = listener_error
-            .clone()
-            .or(startup_status)
-            .unwrap_or_else(|| "Ready".to_owned());
+        let status = listener_error.clone().unwrap_or_else(|| "Ready".to_owned());
 
         Self {
             hours: 0,
@@ -700,6 +734,10 @@ impl ClickerApp {
             applied_always_on_top: None,
             update_status,
             update_check_rx: None,
+            update_install_rx: None,
+            available_update: None,
+            update_prompt_open: false,
+            next_auto_update_check,
             recording_since: None,
             recording_armed_at: None,
             recording_wait_release: false,
@@ -910,10 +948,11 @@ impl ClickerApp {
     }
 
     fn start_update_check(&mut self) {
-        if self.update_check_rx.is_some() {
+        if self.update_check_rx.is_some() || self.update_install_rx.is_some() {
             return;
         }
 
+        self.update_prompt_open = false;
         let (result_tx, result_rx) = mpsc::channel();
         let spawn_result = thread::Builder::new()
             .name("clicksmith-update-check".to_owned())
@@ -923,11 +962,39 @@ impl ClickerApp {
 
         match spawn_result {
             Ok(_) => {
+                self.available_update = None;
                 self.update_check_rx = Some(result_rx);
                 self.update_status = "Checking GitHub for updates…".to_owned();
             }
             Err(error) => {
                 self.update_status = format!("Could not start update check: {error}");
+            }
+        }
+    }
+
+    fn start_update_install(&mut self) {
+        let Some(version) = self.available_update.clone() else {
+            return;
+        };
+        if self.update_check_rx.is_some() || self.update_install_rx.is_some() {
+            return;
+        }
+
+        let (result_tx, result_rx) = mpsc::channel();
+        let spawn_result = thread::Builder::new()
+            .name("clicksmith-update-install".to_owned())
+            .spawn(move || {
+                let _ = result_tx.send(install_update());
+            });
+
+        match spawn_result {
+            Ok(_) => {
+                self.update_install_rx = Some(result_rx);
+                self.update_prompt_open = false;
+                self.update_status = format!("Installing Clicksmith {version}…");
+            }
+            Err(error) => {
+                self.update_status = format!("Could not start update installation: {error}");
             }
         }
     }
@@ -946,19 +1013,52 @@ impl ClickerApp {
         self.update_check_rx = None;
 
         match result {
+            Ok(UpdateCheckResult::UpdateAvailable(version)) => {
+                self.update_status = if self.settings.auto_update_enabled {
+                    format!("Version {version} is available. Choose Install now or Later.")
+                } else {
+                    format!("Version {version} is available. Select Install update to continue.")
+                };
+                self.update_prompt_open = self.settings.auto_update_enabled;
+                self.available_update = Some(version);
+            }
             Ok(UpdateCheckResult::UpToDate) => {
                 self.update_status = "Clicksmith is up to date.".to_owned();
+                self.available_update = None;
             }
             Ok(UpdateCheckResult::DevelopmentBuild) => {
                 self.update_status =
                     "Update checks are disabled in debug builds; use a release build.".to_owned();
+                self.available_update = None;
             }
             Ok(UpdateCheckResult::UpdatesManagedExternally) => {
                 self.update_status =
                     "Updates for this installation are managed by its installer or package manager."
                         .to_owned();
+                self.available_update = None;
             }
-            Ok(UpdateCheckResult::Updated) => {
+            Err(error) => {
+                self.update_status = format!("Update check failed: {error}");
+                self.available_update = None;
+            }
+        }
+    }
+
+    fn poll_update_install(&mut self) {
+        let result = match self.update_install_rx.as_ref() {
+            Some(receiver) => match receiver.try_recv() {
+                Ok(result) => result,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Err("Update installation stopped unexpectedly".to_owned())
+                }
+            },
+            None => return,
+        };
+        self.update_install_rx = None;
+
+        match result {
+            Ok(UpdateInstallResult::Updated) => {
                 self.update_status = "Update installed. Restarting Clicksmith…".to_owned();
                 self.status = "Stopping for update…".to_owned();
                 if let Some(worker) = self.worker.take() {
@@ -977,9 +1077,70 @@ impl ClickerApp {
                     }
                 }
             }
-            Err(error) => {
-                self.update_status = format!("Update check failed: {error}");
+            Ok(UpdateInstallResult::UpToDate) => {
+                self.available_update = None;
+                self.update_status = "Clicksmith is already up to date.".to_owned();
             }
+            Err(error) => {
+                self.update_status = format!("Update installation failed: {error}");
+            }
+        }
+    }
+
+    fn check_scheduled_updates(&mut self) {
+        if !self.settings.auto_update_enabled || !update_checks_supported() {
+            self.next_auto_update_check = None;
+            return;
+        }
+
+        let check_due = self
+            .next_auto_update_check
+            .map_or(true, |next_check| Instant::now() >= next_check);
+        if !check_due {
+            return;
+        }
+
+        self.next_auto_update_check = Some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL);
+        self.start_update_check();
+    }
+
+    fn show_update_prompt(&mut self, ctx: &egui::Context) {
+        let Some(version) = self.available_update.as_deref() else {
+            self.update_prompt_open = false;
+            return;
+        };
+        if !self.update_prompt_open {
+            return;
+        }
+
+        let mut open = true;
+        let mut install_now = false;
+        let mut install_later = false;
+        egui::Window::new("Update available")
+            .id(egui::Id::new("update-available"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!("Clicksmith {version} is available."));
+                ui.label("Install now to download it and restart Clicksmith, or choose Later.");
+                ui.horizontal(|ui| {
+                    if ui.button("Install now").clicked() {
+                        install_now = true;
+                    }
+                    if ui.button("Later").clicked() {
+                        install_later = true;
+                    }
+                });
+            });
+
+        self.update_prompt_open = open && !install_now && !install_later;
+        if install_later || !open {
+            self.update_status =
+                format!("Version {version} is available. You can install it from Settings.");
+        }
+        if install_now {
+            self.start_update_install();
         }
     }
 
@@ -1081,6 +1242,7 @@ impl ClickerApp {
 
     fn show_settings_page(&mut self, ui: &mut egui::Ui) -> bool {
         let mut request_update_check = false;
+        let mut request_update_install = false;
         let mut close_requested = false;
         ui.add_space(6.0);
         ui.heading("Settings");
@@ -1128,21 +1290,63 @@ impl ClickerApp {
         ui.separator();
         ui.label("Updates");
         ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
-        if ui
-            .add_enabled(
-                self.update_check_rx.is_none() && !cfg!(feature = "package-managed"),
-                egui::Button::new(if self.update_check_rx.is_some() {
-                    "Checking for updates…"
-                } else if cfg!(feature = "package-managed") {
-                    "Updates managed externally"
+        let update_supported = update_checks_supported();
+        ui.add_enabled_ui(update_supported, |ui| {
+            if ui
+                .checkbox(
+                    &mut self.settings.auto_update_enabled,
+                    "Automatically check every hour (ask before installing)",
+                )
+                .changed()
+            {
+                if self.settings.auto_update_enabled {
+                    self.next_auto_update_check = Some(Instant::now());
+                    self.update_status =
+                        "Automatic checks enabled. Checking now and then hourly.".to_owned();
                 } else {
-                    "Check for updates"
-                }),
-            )
-            .clicked()
-        {
-            request_update_check = true;
+                    self.next_auto_update_check = None;
+                    self.update_status = "Automatic update checks are off.".to_owned();
+                }
+            }
+        });
+        if !update_supported {
+            ui.small(if cfg!(feature = "package-managed") {
+                "Updates for this installation are managed externally."
+            } else {
+                "Automatic updates are available in release builds only."
+            });
         }
+        let update_in_progress = self.update_check_rx.is_some() || self.update_install_rx.is_some();
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    !update_in_progress && update_supported,
+                    egui::Button::new(if self.update_check_rx.is_some() {
+                        "Checking for updates…"
+                    } else {
+                        "Check for updates"
+                    }),
+                )
+                .clicked()
+            {
+                request_update_check = true;
+            }
+            if self.available_update.is_some() || self.update_install_rx.is_some() {
+                if ui
+                    .add_enabled(
+                        self.available_update.is_some() && !update_in_progress,
+                        egui::Button::new(if self.update_install_rx.is_some() {
+                            "Installing…"
+                        } else {
+                            "Install update"
+                        }),
+                    )
+                    .clicked()
+                {
+                    request_update_install = true;
+                }
+            }
+        });
         ui.label(&self.update_status);
         ui.add_space(8.0);
         if ui.button("Close Settings").clicked() {
@@ -1151,6 +1355,9 @@ impl ClickerApp {
 
         if request_update_check {
             self.start_update_check();
+        }
+        if request_update_install {
+            self.start_update_install();
         }
         close_requested
     }
@@ -1295,6 +1502,8 @@ impl eframe::App for ClickerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_worker();
         self.poll_update_check();
+        self.poll_update_install();
+        self.check_scheduled_updates();
         self.apply_theme(ctx);
         self.apply_window_level(ctx);
 
@@ -1458,6 +1667,7 @@ impl eframe::App for ClickerApp {
         self.show_settings_window(ctx);
         self.show_hotkey_window(ctx);
         self.show_recorder_window(ctx);
+        self.show_update_prompt(ctx);
         self.handle_listener_events();
 
         ctx.request_repaint_after(UI_REFRESH);
