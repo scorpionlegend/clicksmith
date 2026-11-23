@@ -14,7 +14,7 @@ modules:
     build-commands:
       - install -Dm755 clicksmith /app/bin/clicksmith
       - install -Dm644 clicksmith.desktop /app/share/applications/com.scorpionlegend.clicksmith.desktop
-      - install -Dm644 clicksmith.svg /app/share/icons/hicolor/scalable/apps/com.scorpionlegend.clicksmith.svg
+      - install -Dm644 clicksmith.svg /app/share/icons/hicolor/scalable/apps/clicksmith.svg
       - install -Dm644 com.scorpionlegend.clicksmith.metainfo.xml /app/share/metainfo/com.scorpionlegend.clicksmith.metainfo.xml
     sources:
       - type: file

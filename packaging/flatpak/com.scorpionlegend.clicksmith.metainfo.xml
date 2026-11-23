@@ -2,6 +2,7 @@
 <component type="desktop-application">
   <id>com.scorpionlegend.clicksmith</id>
   <name>Clicksmith</name>
+  <icon type="stock">clicksmith</icon>
   <summary>Cross-platform mouse automation</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
