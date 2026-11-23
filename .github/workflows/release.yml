@@ -86,9 +86,22 @@ jobs:
       - name: Install RPM packager
         if: runner.os == 'Linux'
         run: cargo install cargo-generate-rpm --locked --version 0.21.1
+      - name: Set RPM package version
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-([0-9A-Za-z.-]+))?$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          rpm_version="${BASH_REMATCH[1]}"
+          rpm_release="${BASH_REMATCH[3]:-1}"
+          rpm_release="${rpm_release//-/_}"
+          printf 'version = "%s"\nrelease = "%s"\n' "$rpm_version" "$rpm_release" > rpm-metadata.toml
       - name: Create Linux RPM
         if: runner.os == 'Linux'
-        run: cargo generate-rpm --output target/packages/clicksmith-linux-x86_64.rpm
+        run: cargo generate-rpm --metadata-overwrite rpm-metadata.toml --output target/packages/clicksmith-linux-x86_64.rpm
       - name: Create Linux Flatpak bundle
         if: runner.os == 'Linux'
         run: |
