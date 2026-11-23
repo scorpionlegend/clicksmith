@@ -45,7 +45,17 @@ On Linux, the desktop and input crates may require your distribution's X11 devel
 
 Push a `v*` tag to create a GitHub pre-release with platform builds attached. Each tagged release is marked as a pre-release.
 
-Release builds check the public GitHub release list when they start. If a newer version is available, Clicksmith downloads the matching platform archive, verifies its GitHub-published SHA-256 digest when provided, replaces its executable, and restarts. Debug builds skip update checks. The update check requires internet access and write access to the installed executable's folder; if an update cannot be applied, Clicksmith starts normally and shows the reason in its status line.
+## Installers
+
+GitHub pre-releases include:
+
+- **Windows:** NSIS `.exe` installer or `.msi` package.
+- **macOS:** `.dmg` containing `Clicksmith.app`.
+- **Linux:** `.deb`, `.rpm`, `.AppImage`, and `.flatpak` packages, plus a portable `.tar.gz`.
+
+The Windows and macOS installers are unsigned, so their operating systems may show a security warning. Flatpak uses the Freedesktop 25.08 runtime and X11 access for global input controls; those controls still require an X11 or XWayland session.
+
+Portable `.zip` and `.tar.gz` downloads check GitHub for updates at startup, verify the release asset digest when available, replace the executable, and restart. Installer and package-manager builds instead show that updates are managed externally; update them using the same installer or package manager.
 
 ## License
 

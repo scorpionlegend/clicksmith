@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Clicksmith
+Comment=Cross-platform mouse automation
+Exec=clicksmith
+Icon=clicksmith
+Terminal=false
+Categories=Utility;
+StartupNotify=true

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.scorpionlegend.clicksmith</id>
+  <name>Clicksmith</name>
+  <summary>Cross-platform mouse automation</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Configure and run mouse clicks, record click sequences, and play them back.</p>
+  </description>
+  <launchable type="desktop-id">com.scorpionlegend.clicksmith.desktop</launchable>
+  <url type="homepage">https://github.com/scorpionlegend/clicksmith</url>
+</component>

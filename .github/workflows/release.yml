@@ -16,41 +16,99 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04
             platform: linux-x86_64
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
             platform: windows-x86_64
           - os: macos-latest
-            target: aarch64-apple-darwin
             platform: macos-aarch64
           - os: macos-26-intel
-            target: x86_64-apple-darwin
             platform: macos-x86_64
 
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install build target
-        run: rustup target add ${{ matrix.target }}
-      - name: Install Linux input and window dependencies
+      - name: Install Linux packaging and input dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev
-      - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
-      - name: Package Windows build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxtst-dev libxdo-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libfuse2 flatpak flatpak-builder
+          flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build portable self-updating binary
+        run: cargo build --release --locked
+      - name: Package portable Windows archive
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path target/${{ matrix.target }}/release/clicksmith.exe -DestinationPath clicksmith-${{ matrix.platform }}.zip
-      - name: Package macOS and Linux builds
+        run: Compress-Archive -Path target/release/clicksmith.exe -DestinationPath clicksmith-${{ matrix.platform }}.zip
+      - name: Package portable macOS and Linux archives
         if: runner.os != 'Windows'
         shell: bash
-        run: tar -czf clicksmith-${{ matrix.platform }}.tar.gz -C target/${{ matrix.target }}/release clicksmith
+        run: tar -czf clicksmith-${{ matrix.platform }}.tar.gz -C target/release clicksmith
+      - name: Build package-managed binary
+        run: cargo build --release --locked --features package-managed
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked --version 0.11.8
+      - name: Create Windows NSIS installer
+        if: runner.os == 'Windows'
+        run: cargo packager --release --formats nsis
+      - name: Create Windows MSI installer
+        if: runner.os == 'Windows'
+        run: cargo packager --config Packager.msi.toml --formats wix
+      - name: Name Windows installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem target/packages -Filter *.exe | Select-Object -First 1
+          $msi = Get-ChildItem target/packages -Filter *.msi | Select-Object -First 1
+          if (-not $setup -or -not $msi) { throw "Expected both NSIS and MSI packages." }
+          Move-Item $setup.FullName clicksmith-windows-x86_64-setup.exe
+          Move-Item $msi.FullName clicksmith-windows-x86_64.msi
+      - name: Create macOS disk image
+        if: runner.os == 'macOS'
+        run: cargo packager --release --formats dmg
+      - name: Name macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          dmg="$(find target/packages -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          mv "$dmg" "clicksmith-${PLATFORM}.dmg"
+      - name: Create Linux Debian package
+        if: runner.os == 'Linux'
+        run: cargo packager --release --formats deb
+      - name: Create Linux AppImage
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: cargo packager --release --formats appimage
+      - name: Install RPM packager
+        if: runner.os == 'Linux'
+        run: cargo install cargo-generate-rpm --locked --version 0.21.1
+      - name: Create Linux RPM
+        if: runner.os == 'Linux'
+        run: cargo generate-rpm --output target/packages/clicksmith-linux-x86_64.rpm
+      - name: Create Linux Flatpak bundle
+        if: runner.os == 'Linux'
+        run: |
+          flatpak-builder --force-clean --user --install-deps-from=flathub --repo=target/flatpak/repo target/flatpak/build packaging/flatpak/com.scorpionlegend.clicksmith.yml
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo target/flatpak/repo clicksmith-linux-x86_64.flatpak com.scorpionlegend.clicksmith
+      - name: Name Linux packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          deb="$(find target/packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          appimage="$(find target/packages -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$deb"
+          test -n "$appimage"
+          mv "$deb" clicksmith-linux-x86_64.deb
+          mv "$appimage" clicksmith-linux-x86_64.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: clicksmith-${{ matrix.platform }}
-          path: clicksmith-${{ matrix.platform }}.*
+          path: clicksmith-*
+          if-no-files-found: error
 
   publish:
     name: Publish GitHub pre-release

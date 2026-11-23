@@ -1,0 +1,29 @@
+app-id: com.scorpionlegend.clicksmith
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: clicksmith
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+modules:
+  - name: clicksmith
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 clicksmith /app/bin/clicksmith
+      - install -Dm644 clicksmith.desktop /app/share/applications/com.scorpionlegend.clicksmith.desktop
+      - install -Dm644 clicksmith.svg /app/share/icons/hicolor/scalable/apps/com.scorpionlegend.clicksmith.svg
+      - install -Dm644 com.scorpionlegend.clicksmith.metainfo.xml /app/share/metainfo/com.scorpionlegend.clicksmith.metainfo.xml
+    sources:
+      - type: file
+        path: ../../target/release/clicksmith
+      - type: file
+        path: ../linux/clicksmith.desktop
+        dest-filename: clicksmith.desktop
+      - type: file
+        path: ../linux/clicksmith.svg
+        dest-filename: clicksmith.svg
+      - type: file
+        path: com.scorpionlegend.clicksmith.metainfo.xml

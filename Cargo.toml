@@ -1,6 +1,6 @@
 [package]
 name = "clicksmith"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 rust-version = "1.88"
 description = "A cross-platform mouse auto clicker written in Rust"
@@ -9,9 +9,30 @@ repository = "https://github.com/scorpionlegend/clicksmith"
 keywords = ["autoclicker", "mouse", "automation", "egui"]
 categories = ["gui", "os"]
 
+[features]
+package-managed = []
+
 [dependencies]
 eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 enigo = "0.6.1"
 rdev = "0.5.3"
 serde = { version = "1", features = ["derive"] }
 self_update = { version = "1.3.3", default-features = false, features = ["github", "reqwest", "rustls", "archive-tar", "archive-zip", "compression-tar-gz", "compression-zip-deflate", "checksums"] }
+
+[package.metadata.packager]
+product-name = "Clicksmith"
+identifier = "com.scorpionlegend.clicksmith"
+publisher = "Scorpion Legend"
+license-file = "LICENSE"
+category = "Utility"
+binaries = [{ path = "clicksmith", main = true }]
+binaries-dir = "target/release"
+out-dir = "target/packages"
+resources = ["LICENSE"]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/clicksmith", dest = "/usr/bin/clicksmith", mode = "755" },
+    { source = "packaging/linux/clicksmith.desktop", dest = "/usr/share/applications/clicksmith.desktop", mode = "644" },
+    { source = "packaging/linux/clicksmith.svg", dest = "/usr/share/icons/hicolor/scalable/apps/clicksmith.svg", mode = "644" },
+]

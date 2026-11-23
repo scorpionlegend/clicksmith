@@ -1,0 +1,12 @@
+name = "clicksmith"
+product-name = "Clicksmith"
+identifier = "com.scorpionlegend.clicksmith"
+version = "0.1.0"
+binaries = [{ path = "clicksmith", main = true }]
+binaries-dir = "target/release"
+out-dir = "target/packages"
+publisher = "Scorpion Legend"
+license-file = "LICENSE"
+category = "Utility"
+resources = ["LICENSE"]
+formats = ["wix"]

@@ -24,7 +24,11 @@ fn main() -> eframe::Result {
             Ok(_) => std::process::exit(0),
             Err(error) => Some(format!("Update installed, but restart failed: {error}")),
         },
-        Ok(UpdateCheckResult::UpToDate | UpdateCheckResult::DevelopmentBuild) => None,
+        Ok(
+            UpdateCheckResult::UpToDate
+            | UpdateCheckResult::DevelopmentBuild
+            | UpdateCheckResult::UpdatesManagedExternally,
+        ) => None,
         Err(error) => Some(format!("Auto-update skipped: {error}")),
     };
     let options = eframe::NativeOptions {
@@ -60,9 +64,13 @@ enum UpdateCheckResult {
     Updated,
     UpToDate,
     DevelopmentBuild,
+    UpdatesManagedExternally,
 }
 
 fn check_for_updates() -> Result<UpdateCheckResult, String> {
+    if cfg!(feature = "package-managed") {
+        return Ok(UpdateCheckResult::UpdatesManagedExternally);
+    }
     if cfg!(debug_assertions) {
         return Ok(UpdateCheckResult::DevelopmentBuild);
     }
@@ -656,7 +664,10 @@ impl ClickerApp {
         let listener_error = listener_spawn
             .err()
             .map(|error| format!("Could not start the global input listener: {error}"));
-        let update_status = if cfg!(debug_assertions) {
+        let update_status = if cfg!(feature = "package-managed") {
+            "Updates for this installation are managed by its installer or package manager."
+                .to_owned()
+        } else if cfg!(debug_assertions) {
             "Update checks are disabled in debug builds.".to_owned()
         } else if let Some(status) = startup_status.as_ref() {
             status.clone()
@@ -946,6 +957,11 @@ impl ClickerApp {
                 self.update_status =
                     "Update checks are disabled in debug builds; use a release build.".to_owned();
             }
+            Ok(UpdateCheckResult::UpdatesManagedExternally) => {
+                self.update_status =
+                    "Updates for this installation are managed by its installer or package manager."
+                        .to_owned();
+            }
             Ok(UpdateCheckResult::Updated) => {
                 self.update_status = "Update installed. Restarting Clicksmith…".to_owned();
                 self.status = "Stopping for update…".to_owned();
@@ -1088,9 +1104,11 @@ impl ClickerApp {
         ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
         if ui
             .add_enabled(
-                self.update_check_rx.is_none(),
+                self.update_check_rx.is_none() && !cfg!(feature = "package-managed"),
                 egui::Button::new(if self.update_check_rx.is_some() {
                     "Checking for updates…"
+                } else if cfg!(feature = "package-managed") {
+                    "Updates managed externally"
                 } else {
                     "Check for updates"
                 }),
@@ -1436,4 +1454,17 @@ fn interval_field(ui: &mut egui::Ui, label: &str, value: &mut u32, maximum: u32)
         ui.label(label);
         ui.add(egui::DragValue::new(value).range(0..=maximum).speed(1));
     });
+}
+
+#[cfg(all(test, feature = "package-managed"))]
+mod package_managed_tests {
+    use super::{UpdateCheckResult, check_for_updates};
+
+    #[test]
+    fn package_managed_build_skips_self_updates() {
+        assert_eq!(
+            check_for_updates().unwrap(),
+            UpdateCheckResult::UpdatesManagedExternally
+        );
+    }
 }
