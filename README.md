@@ -13,9 +13,9 @@ A native desktop auto clicker written in Rust. It supports Windows, macOS, and L
 - Pick a target location with a click anywhere on screen.
 - Toggle clicking with a configurable global F6–F12 hotkey.
 - Record mouse click positions and timing, then play the sequence back.
-- Choose separate Black and Pink themes, other presets, or custom background and accent colors. Text contrast adjusts automatically, text fields stay white, and preferences persist.
+- Choose separate Black and Pink themes, other presets, or custom background and accent colors. Text contrast adjusts automatically, text fields stay white, and appearance and click settings persist between launches.
 - Keep the main window on top of other windows.
-- Check for GitHub releases at startup or from Settings, install a newer version, then restart.
+- Check for GitHub releases from Settings, or opt into hourly checks with a prompt to install or open the release page.
 
 The main window opens at a minimum of 720 × 760 points and can be resized larger or maximized to fit your display.
 
@@ -43,11 +43,11 @@ cargo build --release
 
 On Linux, the desktop and input crates may require your distribution's X11 development libraries. GitHub Actions checks builds on Windows, macOS, and Ubuntu.
 
-Push a `v*` tag to create a GitHub pre-release with platform builds attached. Each tagged release is marked as a pre-release.
+Push a `v*` tag to create a GitHub release with platform builds attached. Tags containing a hyphen, such as `v0.1.1-alpha.1`, are published as pre-releases; stable tags such as `v0.1.0` are published as releases.
 
 ## Installers
 
-GitHub pre-releases include:
+GitHub releases include:
 
 - **Windows:** NSIS `.exe` installer or `.msi` package.
 - **macOS:** `.dmg` containing `Clicksmith.app`.
@@ -55,7 +55,7 @@ GitHub pre-releases include:
 
 The Windows and macOS installers are unsigned, so their operating systems may show a security warning. Flatpak uses the Freedesktop 25.08 runtime and X11 access for global input controls; those controls still require an X11 or XWayland session.
 
-Portable `.zip` and `.tar.gz` downloads check GitHub for updates at startup, verify the release asset digest when available, replace the executable, and restart. Installer and package-manager builds instead show that updates are managed externally; update them using the same installer or package manager.
+Portable `.zip` and `.tar.gz` downloads support in-app update checks from Settings and can install a newer version, verify its asset digest when available, and restart. Installer and package-manager builds can check for updates and open the release page, but installation remains managed by the installer or package manager.
 
 ## License
 
