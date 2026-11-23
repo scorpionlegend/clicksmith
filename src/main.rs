@@ -33,16 +33,12 @@ fn main() -> eframe::Result {
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([720.0, 760.0])
-            .with_min_inner_size([720.0, 760.0])
-            .with_resizable(true)
-            .with_maximize_button(true),
+            .with_inner_size([420.0, 500.0])
+            .with_min_inner_size([420.0, 500.0])
+            .with_resizable(false)
+            .with_maximize_button(false),
         window_builder: Some(Box::new(|viewport| {
-            let min_size = egui::vec2(720.0, 760.0);
-            match viewport.inner_size {
-                Some(size) if size.x >= min_size.x && size.y >= min_size.y => viewport,
-                _ => viewport.with_inner_size(min_size),
-            }
+            viewport.with_inner_size([420.0, 500.0])
         })),
         ..Default::default()
     };
@@ -1007,6 +1003,19 @@ impl ClickerApp {
         visuals.selection.bg_fill = blend(palette.background, palette.window, 0.5);
         visuals.selection.stroke = egui::Stroke::new(1.0_f32, palette.accent);
         visuals.window_stroke.color = blend(palette.background, palette.accent, 0.35);
+        visuals.button_frame = true;
+        visuals.window_shadow = egui::epaint::Shadow {
+            offset: [0, 3],
+            blur: 8,
+            spread: 1,
+            color: egui::Color32::from_black_alpha(70),
+        };
+        visuals.popup_shadow = egui::epaint::Shadow {
+            offset: [0, 3],
+            blur: 6,
+            spread: 1,
+            color: egui::Color32::from_black_alpha(90),
+        };
 
         let quiet_fill = blend(palette.background, palette.window, 0.55);
         let accent_text = readable_text_color(palette.accent);
@@ -1020,23 +1029,40 @@ impl ClickerApp {
             &mut visuals.widgets.open,
         ] {
             widget.fg_stroke.color = accent_text;
-            widget.bg_stroke.color = blend(palette.background, palette.accent, 0.2);
+            widget.corner_radius = egui::CornerRadius::same(6);
         }
         visuals.widgets.noninteractive.bg_fill = quiet_fill;
         visuals.widgets.noninteractive.weak_bg_fill = palette.background;
+        visuals.widgets.noninteractive.bg_stroke =
+            egui::Stroke::new(1.0_f32, blend(palette.background, palette.accent, 0.2));
         visuals.widgets.inactive.bg_fill = palette.accent;
         visuals.widgets.inactive.weak_bg_fill = palette.background;
+        visuals.widgets.inactive.bg_stroke =
+            egui::Stroke::new(1.0_f32, blend(palette.accent, egui::Color32::WHITE, 0.28));
+        visuals.widgets.inactive.expansion = 1.5;
         visuals.widgets.hovered.bg_fill = hover_fill;
         visuals.widgets.hovered.fg_stroke.color = readable_text_color(hover_fill);
         visuals.widgets.hovered.weak_bg_fill = blend(palette.background, palette.window, 0.4);
+        visuals.widgets.hovered.bg_stroke =
+            egui::Stroke::new(1.5_f32, blend(hover_fill, egui::Color32::WHITE, 0.35));
+        visuals.widgets.hovered.expansion = 2.5;
         visuals.widgets.active.bg_fill = active_fill;
         visuals.widgets.active.fg_stroke.color = readable_text_color(active_fill);
         visuals.widgets.active.weak_bg_fill = blend(palette.background, palette.window, 0.6);
+        visuals.widgets.active.bg_stroke =
+            egui::Stroke::new(1.5_f32, blend(active_fill, egui::Color32::BLACK, 0.28));
+        visuals.widgets.active.expansion = -1.0;
         visuals.widgets.open.bg_fill = hover_fill;
         visuals.widgets.open.fg_stroke.color = readable_text_color(hover_fill);
         visuals.widgets.open.weak_bg_fill = blend(palette.background, palette.window, 0.4);
+        visuals.widgets.open.bg_stroke =
+            egui::Stroke::new(1.5_f32, blend(hover_fill, egui::Color32::WHITE, 0.35));
+        visuals.widgets.open.expansion = 2.0;
 
-        ctx.set_visuals(visuals);
+        ctx.style_mut(|style| {
+            style.spacing.button_padding = egui::vec2(12.0, 5.0);
+            style.visuals = visuals;
+        });
     }
 
     fn apply_window_level(&mut self, ctx: &egui::Context) {
@@ -1322,9 +1348,9 @@ impl eframe::App for ClickerApp {
 
                 egui::Frame::group(columns[1].style()).show(&mut columns[1], |ui| {
                     ui.label("Click repeat");
-                    ui.radio_value(&mut self.repeat_mode, RepeatMode::Count, "Repeat");
-                    ui.add_enabled_ui(self.repeat_mode == RepeatMode::Count, |ui| {
-                        ui.horizontal(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut self.repeat_mode, RepeatMode::Count, "Repeat");
+                        ui.add_enabled_ui(self.repeat_mode == RepeatMode::Count, |ui| {
                             ui.add(egui::DragValue::new(&mut self.repeat_count).range(1..=999_999));
                             ui.label("times");
                         });
@@ -1369,7 +1395,7 @@ impl eframe::App for ClickerApp {
                 }
             });
 
-            ui.add_space(10.0);
+            ui.add_space(20.0);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(
                     self.worker.is_none() && self.recording_since.is_none(),
@@ -1400,6 +1426,7 @@ impl eframe::App for ClickerApp {
                 }
             });
 
+            ui.add_space(10.0);
             ui.horizontal(|ui| {
                 if ui.button("Hotkey setting").clicked() {
                     self.show_hotkey_settings = true;
