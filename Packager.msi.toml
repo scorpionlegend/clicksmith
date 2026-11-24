@@ -5,6 +5,7 @@ version = "0.2.0"
 binaries = [{ path = "clicksmith", main = true }]
 binaries-dir = "target/release"
 out-dir = "target/packages"
+icons = ["packaging/windows/clicksmith.ico"]
 publisher = "Scorpion Legend"
 license-file = "LICENSE"
 category = "Utility"

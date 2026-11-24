@@ -14,18 +14,44 @@ use eframe::egui;
 use enigo::{Button as EnigoButton, Coordinate, Direction, Enigo, Mouse, Settings};
 use rdev::{Button as GlobalButton, Event, EventType, Key};
 
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+use std::io::Read;
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+use sha2::{Digest, Sha256};
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::Path,
+    process::Command,
+    time::UNIX_EPOCH,
+};
+
 const CLICK_GAP: Duration = Duration::from_millis(55);
 const UI_REFRESH: Duration = Duration::from_millis(16);
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(300);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+const WINDOWS_SETUP_ASSET: &str = "clicksmith-windows-x86_64-setup.exe";
 
-fn main() -> eframe::Result {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let icon_image =
+        image::load_from_memory(include_bytes!("../packaging/linux/clicksmith.png"))?.into_rgba8();
+    let (icon_width, icon_height) = icon_image.dimensions();
+    let icon = egui::IconData {
+        rgba: icon_image.into_raw(),
+        width: icon_width,
+        height: icon_height,
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([420.0, 500.0])
             .with_min_inner_size([420.0, 500.0])
             .with_resizable(false)
-            .with_maximize_button(false),
+            .with_maximize_button(false)
+            .with_icon(Arc::new(icon)),
         window_builder: Some(Box::new(|viewport| {
             viewport.with_inner_size([420.0, 500.0])
         })),
@@ -36,7 +62,8 @@ fn main() -> eframe::Result {
         "Clicksmith",
         options,
         Box::new(move |creation_context| Ok(Box::new(ClickerApp::new(creation_context.storage)))),
-    )
+    )?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +77,8 @@ enum UpdateCheckResult {
 enum UpdateInstallResult {
     Updated,
     UpToDate,
+    #[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+    InstallerStarted,
 }
 
 fn configured_updater() -> Result<self_update::backends::github::Update, String> {
@@ -94,20 +123,22 @@ fn update_checks_supported() -> bool {
     !cfg!(debug_assertions)
 }
 
-fn self_update_supported() -> bool {
-    !cfg!(feature = "package-managed") && !cfg!(debug_assertions)
+fn in_app_update_supported() -> bool {
+    !cfg!(debug_assertions)
+        && (!cfg!(feature = "package-managed")
+            || cfg!(all(target_os = "windows", feature = "windows-nsis")))
 }
 
 fn release_page_url(version: &str) -> String {
     format!("https://github.com/scorpionlegend/clicksmith/releases/tag/v{version}")
 }
 
-fn install_update() -> Result<UpdateInstallResult, String> {
-    if cfg!(feature = "package-managed") {
-        return Err("Updates for this installation are managed externally".to_owned());
-    }
+fn install_update(version: &str) -> Result<UpdateInstallResult, String> {
     if cfg!(debug_assertions) {
         return Err("Update installation is disabled in debug builds".to_owned());
+    }
+    if cfg!(feature = "package-managed") {
+        return install_package_managed_update(version);
     }
 
     configured_updater()
@@ -119,6 +150,194 @@ fn install_update() -> Result<UpdateInstallResult, String> {
                 UpdateInstallResult::UpToDate
             }
         })
+}
+
+fn install_package_managed_update(version: &str) -> Result<UpdateInstallResult, String> {
+    #[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+    {
+        install_windows_setup_update(version)
+    }
+    #[cfg(not(all(target_os = "windows", feature = "windows-nsis")))]
+    {
+        let _ = version;
+        Err("Updates for this installation are managed externally".to_owned())
+    }
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+fn windows_setup_asset(
+    release: &self_update::Release,
+) -> Result<&self_update::ReleaseAsset, String> {
+    release
+        .assets()
+        .iter()
+        .find(|asset| asset.name() == WINDOWS_SETUP_ASSET)
+        .ok_or_else(|| format!("Release does not contain {WINDOWS_SETUP_ASSET}"))
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+fn verify_sha256_digest(reader: &mut impl Read, digest: Option<&str>) -> Result<(), String> {
+    let digest = digest.ok_or_else(|| {
+        "GitHub did not provide an installer checksum; refusing to run it.".to_owned()
+    })?;
+    let (algorithm, expected) = digest
+        .split_once(':')
+        .ok_or_else(|| "GitHub returned an invalid installer checksum.".to_owned())?;
+    if algorithm != "sha256"
+        || expected.len() != 64
+        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("GitHub returned an unsupported installer checksum.".to_owned());
+    }
+
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err("Downloaded installer failed its SHA-256 checksum.".to_owned())
+    }
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+fn install_windows_setup_update(version: &str) -> Result<UpdateInstallResult, String> {
+    let release = configured_updater()?
+        .get_release_version(&format!("v{version}"))
+        .map_err(|error| error.to_string())?;
+    let asset = windows_setup_asset(&release)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let temp_dir = std::env::temp_dir();
+    let stem = format!("clicksmith-update-{}-{nonce}", std::process::id());
+    let installer_path = temp_dir.join(format!("{stem}.exe"));
+    let script_path = temp_dir.join(format!("{stem}.ps1"));
+
+    let mut installer_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&installer_path)
+        .map_err(|error| error.to_string())?;
+    let download_result = {
+        let mut download = self_update::Download::from_url(asset.download_url());
+        download
+            .request_header("Accept", "application/octet-stream")
+            .timeout(Duration::from_secs(300))
+            .max_download_size(128 * 1024 * 1024)
+            .download_to(&mut installer_file)
+            .map_err(|error| error.to_string())
+    };
+    drop(installer_file);
+    if let Err(error) = download_result {
+        let _ = fs::remove_file(&installer_path);
+        return Err(error);
+    }
+
+    let mut downloaded_installer = File::open(&installer_path).map_err(|error| {
+        let _ = fs::remove_file(&installer_path);
+        error.to_string()
+    })?;
+    if let Err(error) = verify_sha256_digest(&mut downloaded_installer, asset.digest()) {
+        drop(downloaded_installer);
+        let _ = fs::remove_file(&installer_path);
+        return Err(error);
+    }
+    drop(downloaded_installer);
+
+    let app_path = std::env::current_exe().map_err(|error| {
+        let _ = fs::remove_file(&installer_path);
+        error.to_string()
+    })?;
+    let installer_path_text = installer_path.to_str().ok_or_else(|| {
+        let _ = fs::remove_file(&installer_path);
+        "Downloaded installer path is not valid Unicode.".to_owned()
+    })?;
+    let app_path_text = app_path.to_str().ok_or_else(|| {
+        let _ = fs::remove_file(&installer_path);
+        "Clicksmith executable path is not valid Unicode.".to_owned()
+    })?;
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         $parentProcessId = {}\n\
+         $installerPath = {}\n\
+         $appPath = {}\n\
+         $scriptPath = $MyInvocation.MyCommand.Path\n\
+         try {{\n\
+             Wait-Process -Id $parentProcessId -ErrorAction SilentlyContinue\n\
+             Start-Process -FilePath $installerPath -Wait\n\
+         }} finally {{\n\
+             try {{\n\
+                 Start-Process -FilePath $appPath\n\
+             }} finally {{\n\
+                 Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue\n\
+                 Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue\n\
+             }}\n\
+         }}\n",
+        std::process::id(),
+        powershell_literal(installer_path_text),
+        powershell_literal(app_path_text),
+    );
+    write_powershell_script(&script_path, &script).map_err(|error| {
+        let _ = fs::remove_file(&installer_path);
+        error.to_string()
+    })?;
+
+    launch_update_script(&script_path).map_err(|error| {
+        let _ = fs::remove_file(&installer_path);
+        let _ = fs::remove_file(&script_path);
+        error.to_string()
+    })?;
+    Ok(UpdateInstallResult::InstallerStarted)
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+fn powershell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+fn write_powershell_script(path: &Path, script: &str) -> std::io::Result<()> {
+    let mut encoded = vec![0xFF, 0xFE];
+    for unit in script.encode_utf16() {
+        encoded.extend_from_slice(&unit.to_le_bytes());
+    }
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    if let Err(error) = file.write_all(&encoded) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+fn launch_update_script(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+        ])
+        .arg(path)
+        .creation_flags(0x08000000)
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(target_os = "windows")]
@@ -735,7 +954,7 @@ impl ClickerApp {
             "Update checks are disabled in debug builds.".to_owned()
         } else if settings.auto_update_enabled {
             "Automatic update checks are enabled; Clicksmith checks hourly.".to_owned()
-        } else if cfg!(feature = "package-managed") {
+        } else if !in_app_update_supported() {
             "Check for updates here; install them with your installer or package manager."
                 .to_owned()
         } else {
@@ -1015,10 +1234,11 @@ impl ClickerApp {
         }
 
         let (result_tx, result_rx) = mpsc::channel();
+        let install_version = version.clone();
         let spawn_result = thread::Builder::new()
             .name("clicksmith-update-install".to_owned())
             .spawn(move || {
-                let _ = result_tx.send(install_update());
+                let _ = result_tx.send(install_update(&install_version));
             });
 
         match spawn_result {
@@ -1048,7 +1268,15 @@ impl ClickerApp {
 
         match result {
             Ok(UpdateCheckResult::UpdateAvailable(version)) => {
-                self.update_status = if cfg!(feature = "package-managed") {
+                self.update_status = if in_app_update_supported() {
+                    if self.settings.auto_update_enabled {
+                        format!("Version {version} is available. Choose Install now or Later.")
+                    } else {
+                        format!(
+                            "Version {version} is available. Select Install update to continue."
+                        )
+                    }
+                } else if cfg!(feature = "package-managed") {
                     format!("Version {version} is available. Open the download page to update.")
                 } else if self.settings.auto_update_enabled {
                     format!("Version {version} is available. Choose Install now or Later.")
@@ -1107,6 +1335,20 @@ impl ClickerApp {
                     }
                 }
             }
+            #[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+            Ok(UpdateInstallResult::InstallerStarted) => {
+                self.update_status =
+                    "Downloaded the update. Closing Clicksmith to install it…".to_owned();
+                self.status = "Stopping for update…".to_owned();
+                if let Some(worker) = self.worker.take() {
+                    worker.request_stop();
+                    let _ = worker.thread.join();
+                }
+                self.recording_since = None;
+                self.recording_armed_at = None;
+                self.recording_wait_release = false;
+                std::process::exit(0);
+            }
             Ok(UpdateInstallResult::UpToDate) => {
                 self.available_update = None;
                 self.update_status = "Clicksmith is already up to date.".to_owned();
@@ -1147,7 +1389,7 @@ impl ClickerApp {
         let mut install_now = false;
         let mut open_download_page = false;
         let mut install_later = false;
-        let can_install_in_app = self_update_supported();
+        let can_install_in_app = in_app_update_supported();
         egui::Window::new("Update available")
             .id(egui::Id::new("update-available"))
             .open(&mut open)
@@ -1360,13 +1602,13 @@ impl ClickerApp {
                 }
             }
         });
-        if cfg!(feature = "package-managed") {
+        if cfg!(feature = "package-managed") && !in_app_update_supported() {
             ui.small("Checks are available; downloads and installation are handled externally.");
         } else if !update_supported {
             ui.small("Automatic updates are available in release builds only.");
         }
         let update_in_progress = self.update_check_rx.is_some() || self.update_install_rx.is_some();
-        let can_install_in_app = self_update_supported();
+        let can_install_in_app = in_app_update_supported();
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -1775,15 +2017,74 @@ fn interval_field(ui: &mut egui::Ui, label: &str, value: &mut u32, maximum: u32)
     });
 }
 
-#[cfg(all(test, feature = "package-managed"))]
+#[cfg(all(
+    test,
+    feature = "package-managed",
+    not(all(target_os = "windows", feature = "windows-nsis"))
+))]
 mod package_managed_tests {
-    use super::install_update;
+    use super::install_package_managed_update;
 
     #[test]
-    fn package_managed_build_keeps_installation_external() {
+    fn package_managed_build_without_nsis_keeps_installation_external() {
         assert_eq!(
-            install_update().unwrap_err(),
+            install_package_managed_update("1.2.3").unwrap_err(),
             "Updates for this installation are managed externally"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "windows", feature = "windows-nsis"))]
+mod update_tests {
+    use std::io::Cursor;
+
+    use super::verify_sha256_digest;
+
+    #[test]
+    fn verifies_github_sha256_digest() {
+        let mut valid = Cursor::new(b"abc");
+        assert!(
+            verify_sha256_digest(
+                &mut valid,
+                Some("sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            )
+            .is_ok()
+        );
+
+        let mut invalid = Cursor::new(b"abd");
+        assert!(
+            verify_sha256_digest(
+                &mut invalid,
+                Some("sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn refuses_missing_or_unsupported_release_digests() {
+        let mut input = Cursor::new(b"installer");
+        assert!(verify_sha256_digest(&mut input, None).is_err());
+
+        let mut input = Cursor::new(b"installer");
+        assert!(verify_sha256_digest(&mut input, Some("sha1:abc")).is_err());
+    }
+
+    #[test]
+    fn selects_the_windows_setup_installer_asset() {
+        let mut release = self_update::Release::builder();
+        release.version("1.2.3").assets([
+            self_update::ReleaseAsset::new(
+                "clicksmith-windows-x86_64.zip",
+                "https://example.invalid/portable.zip",
+            ),
+            self_update::ReleaseAsset::new(
+                "clicksmith-windows-x86_64-setup.exe",
+                "https://example.invalid/setup.exe",
+            ),
+        ]);
+        let release = release.build().unwrap();
+        let asset = super::windows_setup_asset(&release).unwrap();
+        assert_eq!(asset.name(), "clicksmith-windows-x86_64-setup.exe");
     }
 }

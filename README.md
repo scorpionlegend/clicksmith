@@ -32,7 +32,9 @@ cd android
 .\gradlew.bat :app:assembleDebug
 ```
 
-On macOS/Linux, run `cd android && bash gradlew :app:assembleDebug`. The debug APK is written to `android/app/build/outputs/apk/debug/`. Wider distribution and in-place updates need a stable Android signing key, so the desktop release workflow does not publish an Android APK yet.
+On macOS/Linux, run `cd android && bash gradlew :app:assembleDebug`. The debug APK is written to `android/app/build/outputs/apk/debug/`.
+
+To publish a signed Android APK with a GitHub release, configure the repository Actions secret `ANDROID_KEYSTORE_BASE64` with your release keystore encoded as Base64, and `ANDROID_KEYSTORE_PASSWORD` with its store/key password. Set the repository Actions variable `ANDROID_SIGNING_ENABLED` to `true` to enable signing and APK attachment. The release key alias is `clicksmith`. Keep an offline backup of the keystore and never commit it; losing the key prevents updates to installations signed with it.
 
 ## Run
 
@@ -70,7 +72,7 @@ GitHub releases include:
 
 The Windows and macOS installers are unsigned, so their operating systems may show a security warning. Flatpak uses the Freedesktop 25.08 runtime and X11 access for global input controls; those controls still require an X11 or XWayland session.
 
-Portable `.zip` and `.tar.gz` downloads support in-app update checks from Settings and can install a newer version, verify its asset digest when available, and restart. Installer and package-manager builds can check for updates and open the release page, but installation remains managed by the installer or package manager.
+Portable `.zip` and `.tar.gz` downloads support in-app updates from Settings. The Windows setup installer downloads and runs its SHA-256-verified setup package, then restarts Clicksmith. MSI, macOS, and Linux package-manager installations can check for updates and open the release page, but installation remains managed by their installer or package manager.
 
 ## License
 
