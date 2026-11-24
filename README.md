@@ -1,6 +1,6 @@
 # Clicksmith
 
-A native desktop auto clicker written in Rust. It supports Windows, macOS, and Linux/X11, with a small `egui` interface and Rust based input handling.
+A native desktop auto clicker written in Rust, with a separate native Android app. The desktop app supports Windows, macOS, and Linux/X11, with a small `egui` interface and Rust based input handling.
 
 ## Features
 
@@ -18,6 +18,21 @@ A native desktop auto clicker written in Rust. It supports Windows, macOS, and L
 - Check for GitHub releases from Settings, or opt into hourly checks with a prompt to install or open the release page.
 
 The main window opens at a minimum of 720 × 760 points and can be resized larger or maximized to fit your display.
+
+## Android
+
+The Android app is in [`android/`](android/) and can be opened in Android Studio. It provides saved tap intervals, optional random timing variation, single/double/triple taps, finite or continuous repeats, a movable tap target, and floating Start/Stop controls.
+
+Android requires you to enable **Clicksmith tap controls** in Accessibility settings. This system permission is used only to place the target and controls over other apps and dispatch taps when you explicitly press Start. The service does not retrieve or inspect other apps' screen contents. Drag the target onto the desired location; Stop is available from the floating controls at all times.
+
+Build a debug APK from the repository root.
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleDebug
+```
+
+On macOS/Linux, run `cd android && bash gradlew :app:assembleDebug`. The debug APK is written to `android/app/build/outputs/apk/debug/`. Wider distribution and in-place updates need a stable Android signing key, so the desktop release workflow does not publish an Android APK yet.
 
 ## Run
 
@@ -43,7 +58,7 @@ cargo build --release
 
 On Linux, the desktop and input crates may require your distribution's X11 development libraries. GitHub Actions checks builds on Windows, macOS, and Ubuntu.
 
-Push a `v*` tag to create a GitHub release with platform builds attached. Tags containing a hyphen, such as `v0.1.1-alpha.1`, are published as pre-releases; stable tags such as `v0.1.0` are published as releases.
+Push a `v*` tag to create a GitHub release with platform builds attached. Tags containing a hyphen, such as `v0.2.0-beta.1`, are published as pre-releases; stable tags such as `v0.1.0` are published as releases.
 
 ## Installers
 

@@ -1,7 +1,7 @@
 name = "clicksmith"
 product-name = "Clicksmith"
 identifier = "com.scorpionlegend.clicksmith"
-version = "0.1.0"
+version = "0.2.0"
 binaries = [{ path = "clicksmith", main = true }]
 binaries-dir = "target/release"
 out-dir = "target/packages"

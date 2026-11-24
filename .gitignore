@@ -1,3 +1,7 @@
 /target
+android/.gradle
+android/build
+android/local.properties
+android/app/build
 *.log
 *.tmp
