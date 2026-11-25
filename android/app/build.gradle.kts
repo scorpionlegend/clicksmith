@@ -39,8 +39,8 @@ android {
         applicationId = "com.scorpionlegend.clicksmith"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.2.0-beta.3"
+        versionCode = 5
+        versionName = "0.2.0-beta.4"
     }
 
     buildTypes {
