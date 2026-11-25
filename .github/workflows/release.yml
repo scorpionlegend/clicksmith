@@ -27,6 +27,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Validate package version matches release tag
+        shell: bash
+        run: |
+          package_version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "clicksmith"))')"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$package_version" != "$tag_version" ]]; then
+            echo "Cargo package version $package_version does not match release tag $tag_version." >&2
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux packaging and input dependencies
         if: runner.os == 'Linux'
@@ -182,4 +191,5 @@ jobs:
           name: Clicksmith ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
+          overwrite_files: true
           files: release-assets/*
