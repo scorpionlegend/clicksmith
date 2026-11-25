@@ -2,12 +2,15 @@ package com.scorpionlegend.clicksmith
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -18,6 +21,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.random.Random
 
 class TapAccessibilityService : AccessibilityService() {
@@ -33,10 +37,28 @@ class TapAccessibilityService : AccessibilityService() {
     private var tapsInCycle = 0
     private var completedCycles = 0L
     private var settings: ClickSettings? = null
+    private var overlayControlReceiverRegistered = false
+    private val overlayControlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                ACTION_HIDE_OVERLAY -> closeFloatingControls()
+                ACTION_SHOW_OVERLAY -> showFloatingControls()
+            }
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        val disclosureAccepted = getSharedPreferences(MainActivity.PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(MainActivity.KEY_ACCESSIBILITY_DISCLOSURE_ACCEPTED, false)
+        if (!disclosureAccepted) {
+            Toast.makeText(this, R.string.accessibility_disclosure_required, Toast.LENGTH_LONG).show()
+            disableSelf()
+            return
+        }
+
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        registerOverlayControlReceiver()
         showFloatingControls()
     }
 
@@ -47,15 +69,53 @@ class TapAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        closeFloatingControls()
+        if (overlayControlReceiverRegistered) {
+            unregisterReceiver(overlayControlReceiver)
+            overlayControlReceiverRegistered = false
+        }
+        super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        closeFloatingControls()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun registerOverlayControlReceiver() {
+        if (overlayControlReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(ACTION_SHOW_OVERLAY)
+            addAction(ACTION_HIDE_OVERLAY)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(overlayControlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(overlayControlReceiver, filter)
+        }
+        overlayControlReceiverRegistered = true
+    }
+
+    private fun closeFloatingControls() {
         stopClicking(getString(R.string.tap_controls_stopped))
         if (::windowManager.isInitialized) {
             if (::targetView.isInitialized && targetView.isAttachedToWindow) windowManager.removeView(targetView)
             if (::controlsView.isInitialized && controlsView.isAttachedToWindow) windowManager.removeView(controlsView)
         }
-        super.onDestroy()
     }
 
     private fun showFloatingControls() {
+        if (::targetView.isInitialized && targetView.isAttachedToWindow &&
+            ::controlsView.isInitialized && controlsView.isAttachedToWindow
+        ) {
+            return
+        }
+        if (::windowManager.isInitialized) {
+            if (::targetView.isInitialized && targetView.isAttachedToWindow) windowManager.removeView(targetView)
+            if (::controlsView.isInitialized && controlsView.isAttachedToWindow) windowManager.removeView(controlsView)
+        }
+
         val preferences = getSharedPreferences(MainActivity.PREFERENCES, Context.MODE_PRIVATE)
         val density = resources.displayMetrics.density
         val targetSize = (52 * density).toInt()
@@ -256,6 +316,8 @@ class TapAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val CLICK_GAP_MS = 55L
+        const val ACTION_SHOW_OVERLAY = "com.scorpionlegend.clicksmith.SHOW_OVERLAY"
+        const val ACTION_HIDE_OVERLAY = "com.scorpionlegend.clicksmith.HIDE_OVERLAY"
     }
 }
 

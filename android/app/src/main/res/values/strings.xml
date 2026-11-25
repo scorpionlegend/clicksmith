@@ -6,6 +6,11 @@
     <string name="service_status_enabled">Tap controls are enabled. The floating target is ready.</string>
     <string name="service_status_disabled">Tap controls are off. Enable the Clicksmith accessibility service to use the floating target.</string>
     <string name="enable_tap_controls">Enable tap controls</string>
+    <string name="accessibility_disclosure_title">About Clicksmith tap controls</string>
+    <string name="accessibility_disclosure_message">Clicksmith uses Android\'s Accessibility Service to show a movable target and floating controls over other apps. When you press Start, it uses the target\'s screen position to send taps according to your settings. It does not read other apps\' screen content or send accessibility data to Clicksmith servers. Tap settings and target position are saved in app preferences and may be included in Android backups if device backup is enabled. Taps stop when the repeat limit is reached or you press Stop.</string>
+    <string name="accessibility_disclosure_accept">Agree and continue</string>
+    <string name="accessibility_disclosure_decline">Not now</string>
+    <string name="accessibility_disclosure_required">Review and accept the in-app disclosure before enabling tap controls.</string>
     <string name="tap_settings">Tap settings</string>
     <string name="interval_label">Interval (milliseconds)</string>
     <string name="random_variation_label">Random variation (milliseconds)</string>

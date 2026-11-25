@@ -1,6 +1,7 @@
 package com.scorpionlegend.clicksmith
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
@@ -56,7 +57,7 @@ class MainActivity : Activity() {
         }
         content.addView(serviceStatus, bottomMargin(12))
         content.addView(button(getString(R.string.enable_tap_controls)) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            requestTapControlsAccess()
         }, bottomMargin(22))
 
         addSectionTitle(content, getString(R.string.tap_settings))
@@ -113,12 +114,53 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::serviceStatus.isInitialized) {
-            serviceStatus.text = if (isTapServiceEnabled()) {
+            val serviceEnabled = isTapServiceEnabled()
+            serviceStatus.text = if (serviceEnabled) {
                 getString(R.string.service_status_enabled)
             } else {
                 getString(R.string.service_status_disabled)
             }
+            val disclosureAccepted = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+                .getBoolean(KEY_ACCESSIBILITY_DISCLOSURE_ACCEPTED, false)
+            if (serviceEnabled && disclosureAccepted) {
+                sendOverlayCommand(TapAccessibilityService.ACTION_SHOW_OVERLAY)
+            }
         }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing && isTapServiceEnabled()) {
+            sendOverlayCommand(TapAccessibilityService.ACTION_HIDE_OVERLAY)
+        }
+        super.onDestroy()
+    }
+
+    private fun requestTapControlsAccess() {
+        val preferences = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+        if (preferences.getBoolean(KEY_ACCESSIBILITY_DISCLOSURE_ACCEPTED, false)) {
+            openAccessibilitySettings()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.accessibility_disclosure_title)
+            .setMessage(R.string.accessibility_disclosure_message)
+            .setNegativeButton(R.string.accessibility_disclosure_decline, null)
+            .setPositiveButton(R.string.accessibility_disclosure_accept) { _, _ ->
+                preferences.edit()
+                    .putBoolean(KEY_ACCESSIBILITY_DISCLOSURE_ACCEPTED, true)
+                    .apply()
+                openAccessibilitySettings()
+            }
+            .show()
+    }
+
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    private fun sendOverlayCommand(action: String) {
+        sendBroadcast(Intent(action).setPackage(packageName))
     }
 
     private fun saveSettings() {
@@ -201,5 +243,6 @@ class MainActivity : Activity() {
         const val KEY_TAPS_PER_CYCLE = "taps_per_cycle"
         const val KEY_TARGET_X = "target_x"
         const val KEY_TARGET_Y = "target_y"
+        const val KEY_ACCESSIBILITY_DISCLOSURE_ACCEPTED = "accessibility_disclosure_accepted"
     }
 }

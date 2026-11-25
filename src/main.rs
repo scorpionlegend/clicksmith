@@ -81,8 +81,11 @@ enum UpdateInstallResult {
     InstallerStarted,
 }
 
-fn configured_updater() -> Result<self_update::backends::github::Update, String> {
-    self_update::backends::github::Update::configure()
+fn configured_updater(
+    release_tag: Option<String>,
+) -> Result<self_update::backends::github::Update, String> {
+    let mut updater = self_update::backends::github::Update::configure();
+    updater
         .repo_owner("scorpionlegend")
         .repo_name("clicksmith")
         .bin_name("clicksmith")
@@ -91,31 +94,68 @@ fn configured_updater() -> Result<self_update::backends::github::Update, String>
         .update_strategy(self_update::UpdateStrategy::Latest)
         .timeout(Duration::from_secs(30))
         .check_install_path_writable(true)
-        .unattended()
-        .build()
-        .map_err(|error| error.to_string())
+        .unattended();
+    if let Some(release_tag) = release_tag {
+        updater.release_tag(release_tag);
+    }
+    updater.build().map_err(|error| error.to_string())
 }
 
-fn check_for_updates() -> Result<UpdateCheckResult, String> {
+fn latest_eligible_version(
+    versions: impl IntoIterator<Item = String>,
+    channel: UpdateChannel,
+) -> Result<Option<String>, String> {
+    let mut latest: Option<(semver::Version, String)> = None;
+    for version_text in versions {
+        let version = semver::Version::parse(&version_text).map_err(|error| error.to_string())?;
+        if !channel.allows(&version) {
+            continue;
+        }
+
+        if latest.as_ref().map_or(true, |(latest_version, _)| {
+            version.cmp(latest_version).is_gt()
+        }) {
+            latest = Some((version, version_text));
+        }
+    }
+    Ok(latest.map(|(_, version)| version))
+}
+
+fn release_supports_current_platform(release: &self_update::Release) -> bool {
+    #[cfg(all(target_os = "windows", feature = "windows-nsis"))]
+    {
+        release
+            .assets()
+            .iter()
+            .any(|asset| asset.name() == WINDOWS_SETUP_ASSET)
+    }
+    #[cfg(not(all(target_os = "windows", feature = "windows-nsis")))]
+    {
+        release
+            .assets()
+            .iter()
+            .any(|asset| asset.name().contains(release_asset_identifier()))
+    }
+}
+
+fn check_for_updates(channel: UpdateChannel) -> Result<UpdateCheckResult, String> {
     if cfg!(debug_assertions) {
         return Ok(UpdateCheckResult::DevelopmentBuild);
     }
 
-    let releases = configured_updater()?
+    let releases = configured_updater(None)?
         .get_newer_releases()
         .map_err(|error| error.to_string())?;
-    if releases
-        .is_update_available()
-        .map_err(|error| error.to_string())?
-    {
-        let version = releases
-            .latest()
-            .ok_or_else(|| "GitHub returned no release details".to_owned())?
-            .version()
-            .to_owned();
-        Ok(UpdateCheckResult::UpdateAvailable(version))
-    } else {
-        Ok(UpdateCheckResult::UpToDate)
+    let version = latest_eligible_version(
+        releases
+            .into_iter()
+            .filter(release_supports_current_platform)
+            .map(|release| release.version().to_owned()),
+        channel,
+    )?;
+    match version {
+        Some(version) => Ok(UpdateCheckResult::UpdateAvailable(version)),
+        None => Ok(UpdateCheckResult::UpToDate),
     }
 }
 
@@ -133,15 +173,22 @@ fn release_page_url(version: &str) -> String {
     format!("https://github.com/scorpionlegend/clicksmith/releases/tag/v{version}")
 }
 
-fn install_update(version: &str) -> Result<UpdateInstallResult, String> {
+fn install_update(version: &str, channel: UpdateChannel) -> Result<UpdateInstallResult, String> {
     if cfg!(debug_assertions) {
         return Err("Update installation is disabled in debug builds".to_owned());
+    }
+    let parsed_version = semver::Version::parse(version).map_err(|error| error.to_string())?;
+    if !channel.allows(&parsed_version) {
+        return Err(format!(
+            "Version {version} is not available in the {} channel",
+            channel.label()
+        ));
     }
     if cfg!(feature = "package-managed") {
         return install_package_managed_update(version);
     }
 
-    configured_updater()
+    configured_updater(Some(format!("v{version}")))
         .and_then(|updater| updater.update().map_err(|error| error.to_string()))
         .map(|status| {
             if status.is_updated() {
@@ -211,7 +258,7 @@ fn verify_sha256_digest(reader: &mut impl Read, digest: Option<&str>) -> Result<
 
 #[cfg(all(target_os = "windows", feature = "windows-nsis"))]
 fn install_windows_setup_update(version: &str) -> Result<UpdateInstallResult, String> {
-    let release = configured_updater()?
+    let release = configured_updater(None)?
         .get_release_version(&format!("v{version}"))
         .map_err(|error| error.to_string())?;
     let asset = windows_setup_asset(&release)?;
@@ -371,6 +418,27 @@ fn release_asset_identifier() -> &'static str {
 #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 fn release_asset_identifier() -> &'static str {
     "clicksmith"
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Stable => "Stable",
+            Self::Beta => "Beta",
+        }
+    }
+
+    fn allows(self, version: &semver::Version) -> bool {
+        self == Self::Beta || version.pre.is_empty()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -718,6 +786,7 @@ struct AppSettings {
     custom_accent: [u8; 3],
     always_on_top: bool,
     auto_update_enabled: bool,
+    update_channel: UpdateChannel,
     hours: u32,
     minutes: u32,
     seconds: u32,
@@ -743,6 +812,7 @@ impl Default for AppSettings {
             custom_accent: [74, 134, 202],
             always_on_top: false,
             auto_update_enabled: false,
+            update_channel: UpdateChannel::Stable,
             hours: 0,
             minutes: 0,
             seconds: 0,
@@ -906,6 +976,7 @@ struct ClickerApp {
     show_settings: bool,
     settings: AppSettings,
     applied_always_on_top: Option<bool>,
+    settings_focus_pending: bool,
     update_status: String,
     update_check_rx: Option<Receiver<Result<UpdateCheckResult, String>>>,
     update_install_rx: Option<Receiver<Result<UpdateInstallResult, String>>>,
@@ -985,6 +1056,7 @@ impl ClickerApp {
             show_settings: false,
             settings,
             applied_always_on_top: None,
+            settings_focus_pending: false,
             update_status,
             update_check_rx: None,
             update_install_rx: None,
@@ -1206,11 +1278,12 @@ impl ClickerApp {
         }
 
         self.update_prompt_open = false;
+        let channel = self.settings.update_channel;
         let (result_tx, result_rx) = mpsc::channel();
         let spawn_result = thread::Builder::new()
             .name("clicksmith-update-check".to_owned())
             .spawn(move || {
-                let _ = result_tx.send(check_for_updates());
+                let _ = result_tx.send(check_for_updates(channel));
             });
 
         match spawn_result {
@@ -1235,10 +1308,11 @@ impl ClickerApp {
 
         let (result_tx, result_rx) = mpsc::channel();
         let install_version = version.clone();
+        let channel = self.settings.update_channel;
         let spawn_result = thread::Builder::new()
             .name("clicksmith-update-install".to_owned())
             .spawn(move || {
-                let _ = result_tx.send(install_update(&install_version));
+                let _ = result_tx.send(install_update(&install_version, channel));
             });
 
         match spawn_result {
@@ -1576,14 +1650,60 @@ impl ClickerApp {
         }
 
         ui.label("Text color adjusts automatically for contrast.");
-        ui.checkbox(
-            &mut self.settings.always_on_top,
-            "Keep main window always on top",
-        );
+        let always_on_top_changed = ui
+            .checkbox(
+                &mut self.settings.always_on_top,
+                "Keep main window always on top",
+            )
+            .changed();
+        if always_on_top_changed && self.settings.always_on_top {
+            self.settings_focus_pending = true;
+        }
         ui.separator();
         ui.label("Updates");
         ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
         let update_supported = update_checks_supported();
+        let update_in_progress = self.update_check_rx.is_some() || self.update_install_rx.is_some();
+        let previous_update_channel = self.settings.update_channel;
+        ui.add_enabled_ui(!update_in_progress, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Update channel");
+                egui::ComboBox::from_id_salt("update-channel")
+                    .selected_text(self.settings.update_channel.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.settings.update_channel,
+                            UpdateChannel::Stable,
+                            UpdateChannel::Stable.label(),
+                        );
+                        ui.selectable_value(
+                            &mut self.settings.update_channel,
+                            UpdateChannel::Beta,
+                            UpdateChannel::Beta.label(),
+                        );
+                    });
+            });
+        });
+        if self.settings.update_channel != previous_update_channel {
+            self.available_update = None;
+            self.update_prompt_open = false;
+            if self.settings.auto_update_enabled && update_supported {
+                self.next_auto_update_check = Some(Instant::now());
+                self.update_status = format!(
+                    "{} channel selected. Checking for updates now.",
+                    self.settings.update_channel.label()
+                );
+            } else if update_supported {
+                self.update_status = format!(
+                    "{} channel selected. Check for updates to apply it.",
+                    self.settings.update_channel.label()
+                );
+            } else {
+                self.update_status =
+                    "Update channel selection takes effect in release builds.".to_owned();
+            }
+        }
+        ui.small("Stable gets stable releases only. Beta also gets stable releases.");
         ui.add_enabled_ui(update_supported, |ui| {
             if ui
                 .checkbox(
@@ -1607,7 +1727,6 @@ impl ClickerApp {
         } else if !update_supported {
             ui.small("Automatic updates are available in release builds only.");
         }
-        let update_in_progress = self.update_check_rx.is_some() || self.update_install_rx.is_some();
         let can_install_in_app = in_app_update_supported();
         ui.horizontal(|ui| {
             if ui
@@ -1685,6 +1804,12 @@ impl ClickerApp {
             viewport_id,
             viewport_builder,
             |settings_ctx, viewport_class| {
+                if self.settings_focus_pending {
+                    if viewport_class != egui::ViewportClass::Embedded {
+                        settings_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    self.settings_focus_pending = false;
+                }
                 let close_clicked = if viewport_class == egui::ViewportClass::Embedded {
                     let mut open = true;
                     let mut close_clicked = false;
@@ -2015,6 +2140,57 @@ fn interval_field(ui: &mut egui::Ui, label: &str, value: &mut u32, maximum: u32)
         ui.label(label);
         ui.add(egui::DragValue::new(value).range(0..=maximum).speed(1));
     });
+}
+
+#[cfg(test)]
+mod update_channel_tests {
+    use super::{UpdateChannel, latest_eligible_version};
+
+    #[test]
+    fn stable_channel_skips_prereleases_and_selects_the_newest_stable_version() {
+        let version = latest_eligible_version(
+            vec![
+                "0.2.0-beta.4".to_owned(),
+                "0.2.0".to_owned(),
+                "0.2.1".to_owned(),
+                "0.3.0-beta.1".to_owned(),
+            ],
+            UpdateChannel::Stable,
+        )
+        .unwrap();
+
+        assert_eq!(version.as_deref(), Some("0.2.1"));
+    }
+
+    #[test]
+    fn beta_channel_includes_prereleases_and_stable_releases() {
+        let prerelease = latest_eligible_version(
+            vec![
+                "0.2.0".to_owned(),
+                "0.3.0-beta.2".to_owned(),
+                "0.3.0-beta.4".to_owned(),
+            ],
+            UpdateChannel::Beta,
+        )
+        .unwrap();
+        let stable = latest_eligible_version(
+            vec!["0.3.0-beta.4".to_owned(), "0.3.0".to_owned()],
+            UpdateChannel::Beta,
+        )
+        .unwrap();
+
+        assert_eq!(prerelease.as_deref(), Some("0.3.0-beta.4"));
+        assert_eq!(stable.as_deref(), Some("0.3.0"));
+    }
+
+    #[test]
+    fn stable_channel_has_no_update_when_only_prereleases_exist() {
+        let version =
+            latest_eligible_version(vec!["0.3.0-beta.4".to_owned()], UpdateChannel::Stable)
+                .unwrap();
+
+        assert_eq!(version, None);
+    }
 }
 
 #[cfg(all(

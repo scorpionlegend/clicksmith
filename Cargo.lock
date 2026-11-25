@@ -364,13 +364,14 @@ dependencies = [
 
 [[package]]
 name = "clicksmith"
-version = "0.2.0-beta.4"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "enigo",
  "image",
  "rdev",
  "self_update",
+ "semver",
  "serde",
  "sha2 0.10.9",
  "winresource",
