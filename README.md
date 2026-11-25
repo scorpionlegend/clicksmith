@@ -34,7 +34,7 @@ cd android
 
 On macOS/Linux, run `cd android && bash gradlew :app:assembleDebug`. The debug APK is written to `android/app/build/outputs/apk/debug/`.
 
-To publish a signed Android APK with a GitHub release, configure the repository Actions secret `ANDROID_KEYSTORE_BASE64` with your release keystore encoded as Base64, and `ANDROID_KEYSTORE_PASSWORD` with its store/key password. Set the repository Actions variable `ANDROID_SIGNING_ENABLED` to `true` to enable signing and APK attachment. The release key alias is `clicksmith`. Keep an offline backup of the keystore and never commit it; losing the key prevents updates to installations signed with it.
+GitHub releases include an installable Android debug APK. To publish a signed release APK instead, configure the repository Actions secret `ANDROID_KEYSTORE_BASE64` with your release keystore encoded as Base64, and `ANDROID_KEYSTORE_PASSWORD` with its store/key password. Set the repository Actions variable `ANDROID_SIGNING_ENABLED` to `true` to enable signing. The release key alias is `clicksmith`. Keep an offline backup of the keystore and never commit it; losing the key prevents updates to installations signed with it.
 
 ## Run
 
