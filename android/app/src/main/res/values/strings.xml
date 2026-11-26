@@ -19,6 +19,8 @@
     <string name="number_of_intervals">Number of intervals</string>
     <string name="save_settings">Save settings</string>
     <string name="tap_instructions">After enabling the tap controls, drag the target onto the spot to tap. Use the floating Start/Stop buttons while another app is open. The accessibility service does not read other apps\' screen contents.</string>
+    <string name="privacy_policy">Privacy Policy</string>
+    <string name="privacy_policy_url">https://scorpionlegend.github.io/clicksmith/privacy-policy/</string>
     <string name="invalid_settings">Enter valid numbers for the tap settings.</string>
     <string name="settings_saved">Settings saved.</string>
     <string name="service_ready">Ready</string>

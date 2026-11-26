@@ -26,6 +26,8 @@ The Android app is in [`android/`](android/) and can be opened in Android Studio
 
 Android requires you to accept the in-app accessibility disclosure, then enable **Clicksmith tap controls** in Accessibility settings. This system permission is used to place the target and controls over other apps and dispatch taps when you press Start. The service does not inspect other apps' screen contents or send accessibility data to Clicksmith servers. Tap settings and target position are saved in app preferences and may be included in Android backups if device backup is enabled. The overlay stays visible while Clicksmith is in the background, closes when you finish or dismiss the app task, and returns when you reopen the app. Drag the target onto the desired location; Stop is available from the floating controls at all times.
 
+See the [Clicksmith Android Privacy Policy](https://scorpionlegend.github.io/clicksmith/privacy-policy/).
+
 Build a debug APK from the repository root.
 
 ```powershell

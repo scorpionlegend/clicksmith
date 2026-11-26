@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
@@ -106,6 +107,20 @@ class MainActivity : Activity() {
             textSize = 14f
             setTextColor(Color.rgb(75, 85, 99))
             setPadding(0, dp(18), 0, 0)
+        }, fullWidth())
+        content.addView(TextView(this).apply {
+            text = getString(R.string.privacy_policy)
+            textSize = 14f
+            setTextColor(Color.rgb(23, 105, 170))
+            setPadding(0, dp(18), 0, dp(8))
+            setOnClickListener {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse(getString(R.string.privacy_policy_url)),
+                    ),
+                )
+            }
         }, fullWidth())
 
         setContentView(scrollView)
